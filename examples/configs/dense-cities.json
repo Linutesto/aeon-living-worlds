@@ -1,0 +1,37 @@
+{
+  "seed": 7,
+  "width": 192,
+  "height": 192,
+  "name": "Crowded Realms",
+  "start_species": 6,
+  "start_population": 12000,
+  "start_civilizations": 8,
+  "params": {
+    "rainfall_multiplier": 1.0,
+    "temperature_bias": 0.0,
+    "storm_intensity": 1.0,
+    "sea_level": 0.0,
+    "volcanic_activity": 0.0,
+    "tectonic_drift": 0.0,
+    "resource_richness": 1.6,
+    "plant_growth": 1.6,
+    "prey_fertility": 1.0,
+    "predator_fertility": 1.0,
+    "mutation_rate": 0.02,
+    "carrying_capacity": 1.8,
+    "civ_expansion_drive": 1.8,
+    "war_propensity": 1.0,
+    "tech_progress": 1.0
+  },
+  "presentation": {
+    "graphics_preset": "desktop",
+    "texture_pack": "default-clean",
+    "lod_distance": 1.0,
+    "max_buildings": 30000,
+    "max_particles": 6000,
+    "max_lights": 800,
+    "city_density": 1.8,
+    "building_density": 1.8,
+    "road_density": 1.0
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "name": "dark-fantasy",
+  "label": "Dark Fantasy",
+  "description": "A grim, desaturated realm of cold stone and brooding fog.",
+  "remap": {
+    "grass": "moss",
+    "dry_grass": "forest_floor",
+    "stone": "fortress_stone",
+    "plaster": "ruined_masonry",
+    "brick": "fortress_stone",
+    "rooftile": "slate",
+    "clay_tile": "slate"
+  },
+  "water": {
+    "color": "#22343f",
+    "opacity": 0.9
+  },
+  "grade": {
+    "exposure": 0.86,
+    "fog": "#2a2f3a",
+    "tint": "#aeb6c6",
+    "saturation": 0.62
+  },
+  "particles": "ash",
+  "disableHeavy": false
+}

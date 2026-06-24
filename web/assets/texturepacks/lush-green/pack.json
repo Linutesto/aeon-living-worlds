@@ -1,0 +1,24 @@
+{
+  "name": "lush-green",
+  "label": "Lush Green",
+  "description": "Verdant overgrowth \u2014 deep grass, mossy stone, vivid foliage.",
+  "remap": {
+    "dry_grass": "grass",
+    "dirt": "moss",
+    "farmland": "grass",
+    "packed_earth": "moss",
+    "mud": "forest_floor"
+  },
+  "water": {
+    "color": "#2c7e74",
+    "opacity": 0.8
+  },
+  "grade": {
+    "exposure": 1.05,
+    "fog": "#bfe0c4",
+    "tint": "#e8ffe6",
+    "saturation": 1.18
+  },
+  "particles": "pollen",
+  "disableHeavy": false
+}

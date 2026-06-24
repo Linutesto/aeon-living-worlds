@@ -1,0 +1,18 @@
+{
+  "name": "performance-low",
+  "label": "Performance (Low)",
+  "description": "Flat albedo, no heavy effects \u2014 maximum FPS for weak GPUs/mobile.",
+  "remap": {},
+  "water": {
+    "color": "#356b80",
+    "opacity": 0.85
+  },
+  "grade": {
+    "exposure": 1.0,
+    "fog": "#c2d2dc",
+    "tint": "#ffffff",
+    "saturation": 1.0
+  },
+  "particles": "none",
+  "disableHeavy": true
+}

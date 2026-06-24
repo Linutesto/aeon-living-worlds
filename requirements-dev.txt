@@ -1,0 +1,16 @@
+# Development dependencies for AEON: Living Worlds.
+# Install on top of the runtime deps:
+#   pip install -r requirements.txt -r requirements-dev.txt
+
+-r requirements.txt
+
+# Testing
+pytest>=8.0
+
+# Optional: GPU-accelerated species policies / society mind. Install the build that
+# matches your CUDA (see docs/INSTALL.md); CPU/numpy fallback works without it.
+#   pip install torch --index-url https://download.pytorch.org/whl/cu124
+# torch>=2.2
+
+# Optional: headless screenshot / trailer capture (Chromium driven via playwright-core).
+# Node-based; see scripts/capture_screenshots.cjs and docs/TRAILER_CAPTURE.md.

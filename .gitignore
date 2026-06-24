@@ -1,0 +1,72 @@
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+env/
+
+# ---- Node / web tooling ----
+node_modules/
+dist/
+build/
+.playwright/
+playwright-profile*/
+
+# ---- Secrets / local config ----
+.env
+.env.*
+!.env.example
+config.local.yaml
+*.local.yaml
+secrets.*
+
+# ---- Logs / temp / scratch ----
+*.log
+scratchpad/
+.scratch/
+tmp/
+*.tmp
+
+# ---- Runtime world state (regenerated each run) ----
+world_memory.json
+world_chronicle.json
+world_flavor.json
+world_interp.json
+
+# ---- Local saves & trained model weights (not public artifacts) ----
+saves/
+*.pt
+*.pth
+*.ckpt
+
+# ---- Generated trailer media (large; regenerate via scripts/capture_trailer.sh) ----
+media/trailer/*.gif
+media/trailer/*.webm
+media/trailer/*.mp4
+
+# ---- Heavy / optional assets ----
+# 2K texture variants (~130MB). Base textures ship with the repo; the renderer
+# falls back gracefully when these are absent. See docs/TEXTURE_PACKS.md.
+web/assets/textures/2k/
+
+# ---- Internal dev/agent docs & artifacts (kept locally, not published) ----
+.artifacts/
+AGENTS.md
+CLAUDE.md
+CODEX.md
+CODEX_HANDOFF.md
+
+# ---- Vendored separate project (own repo; not part of AEON) ----
+freeaitokens/
+
+# ---- OS / editor cruft ----
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/

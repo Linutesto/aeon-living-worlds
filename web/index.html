@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0a0a12" />
+  <title>AEON — Living World</title>
+  <link rel="stylesheet" href="/css/styles.css" />
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+    }
+  }
+  </script>
+</head>
+<body>
+  <header id="statusbar">
+    <div class="brand">◈ AEON</div>
+    <div class="vitals">
+      <span class="vital" title="World age"><b id="v-age">0</b><i>age</i></span>
+      <span class="vital" title="People living in cities"><b id="v-pop">0</b><i>people</i></span>
+      <span class="vital" title="Cities"><b id="v-cities">0</b><i>cities</i></span>
+      <span class="vital" title="Civilizations"><b id="v-civs">0</b><i>civs</i></span>
+      <span class="vital" title="Wars in last 200 ticks"><b id="v-war">–</b><i>war</i></span>
+      <span class="vital health" title="World health"><b id="v-health">0</b><i>health</i></span>
+      <span class="vital" title="Renderer frame rate"><b id="v-fps">60</b><i>fps</i></span>
+    </div>
+    <div id="conn" class="conn off" title="Connection">●</div>
+  </header>
+
+  <main id="stage">
+    <canvas id="world"></canvas>
+
+    <!-- map data overlays -->
+    <div id="map-overlays" class="chiprow">
+      <button class="chip active" data-overlay="territory">Territory</button>
+      <button class="chip" data-overlay="political">Nations</button>
+      <button class="chip" data-overlay="trade">Trade</button>
+      <button class="chip" data-overlay="economy">Economy</button>
+      <button class="chip" data-overlay="population">Population</button>
+      <button class="chip" data-overlay="religion">Religion</button>
+      <button class="chip" data-overlay="faction">Faction</button>
+      <button class="chip" data-overlay="migration">Migration</button>
+      <button class="chip" data-overlay="war">War</button>
+      <button class="chip" data-overlay="policy_confidence">Policy</button>
+      <button class="chip" data-overlay="rebellion_probability">Rebellion</button>
+      <button class="chip" data-overlay="resources">Resources</button>
+      <button class="chip" data-overlay="life">Wildlife</button>
+      <button class="chip" data-overlay="climate">Climate</button>
+    </div>
+
+    <!-- camera modes -->
+    <div id="cam-modes" class="chiprow cams">
+      <button class="chip cam active" data-cam="god">🌍 God</button>
+      <button class="chip cam" data-cam="civilization">🏛 Civ</button>
+      <button class="chip cam" data-cam="city">🏙 City</button>
+      <button class="chip cam" data-cam="unit">🚶 Unit</button>
+      <button class="chip cam" data-cam="timelapse">⏩ Time-lapse</button>
+    </div>
+
+    <!-- legend: what the moving dots mean -->
+    <div id="legend" class="legend">
+      <span><i style="background:#ffd24a"></i>trade</span>
+      <span><i style="background:#4ad0ff"></i>migrants</span>
+      <span><i style="background:#ff4a4a"></i>army</span>
+      <span><i style="background:#c07bff"></i>explorer</span>
+    </div>
+
+    <div id="event-toast" class="event-toast"></div>
+
+    <!-- Phase 9: citizen-follow HUD (shown only while following a citizen) -->
+    <div id="follow-hud" class="follow-hud hidden">
+      <div class="fh-head">
+        <div class="fh-id">
+          <div class="fh-name" id="fh-name">—</div>
+          <div class="fh-sub" id="fh-sub"></div>
+        </div>
+        <button class="fh-close" id="fh-close" title="Stop following">✕</button>
+      </div>
+      <div class="fh-activity" id="fh-activity">…</div>
+      <div class="fh-grid" id="fh-grid"></div>
+      <div class="fh-actions">
+        <button class="chip" id="fh-story">📜 Life story</button>
+        <button class="chip" id="fh-home">◎ Home city</button>
+      </div>
+    </div>
+  </main>
+
+  <section id="panel" class="panel hidden">
+    <div class="panel-grip" id="panel-grip"></div>
+    <div class="panel-body" id="panel-body"></div>
+  </section>
+
+  <div id="timebar" class="timebar">
+    <button id="btn-pause" class="time-btn" title="Pause">❚❚</button>
+    <button class="time-btn speed" data-speed="0.25">¼×</button>
+    <button class="time-btn speed" data-speed="0.5">½×</button>
+    <button class="time-btn speed active" data-speed="1">1×</button>
+    <button class="time-btn speed" data-speed="2">2×</button>
+    <button class="time-btn speed" data-speed="5">5×</button>
+    <button class="time-btn speed" data-speed="10">10×</button>
+    <button class="time-btn speed" data-speed="50">50×</button>
+    <button class="time-btn speed" data-speed="100">100×</button>
+  </div>
+
+  <nav id="tabbar">
+    <button class="tab active" data-tab="world">🌍<span>World</span></button>
+    <button class="tab" data-tab="governor">🜂<span>Spirit</span></button>
+    <button class="tab" data-tab="timeline">📜<span>History</span></button>
+    <button class="tab" data-tab="life">🏛<span>Atlas</span></button>
+    <button class="tab" data-tab="metrics">📈<span>Charts</span></button>
+    <button class="tab" data-tab="god">⚡<span>God</span></button>
+    <button class="tab" data-tab="setup">⚙<span>Setup</span></button>
+  </nav>
+
+  <script type="module" src="/js/main.js"></script>
+</body>
+</html>

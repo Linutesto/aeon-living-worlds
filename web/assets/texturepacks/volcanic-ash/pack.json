@@ -1,0 +1,29 @@
+{
+  "name": "volcanic-ash",
+  "label": "Volcanic Ash",
+  "description": "Scorched basalt and ashfall, embers glowing in a dark haze.",
+  "remap": {
+    "grass": "ash",
+    "dry_grass": "burned_ground",
+    "forest_floor": "ash",
+    "moss": "burned_ground",
+    "mud": "burned_ground",
+    "farmland": "ash",
+    "snow": "ash",
+    "ice": "ash",
+    "beach": "ash",
+    "marsh": "burned_ground"
+  },
+  "water": {
+    "color": "#5c2b22",
+    "opacity": 0.88
+  },
+  "grade": {
+    "exposure": 0.9,
+    "fog": "#3a2420",
+    "tint": "#ffcaa0",
+    "saturation": 0.9
+  },
+  "particles": "embers",
+  "disableHeavy": false
+}

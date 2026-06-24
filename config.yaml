@@ -1,0 +1,72 @@
+# AEON world configuration. Everything the system reads at boot lives here.
+
+world:
+  seed: 71            # deterministic: same seed + same directives => same world
+  width: 192            # grid columns
+  height: 192           # grid rows
+  name: "Aeon-Prime"
+
+sim:
+  tick_seconds: 0.2     # wall-clock seconds between deterministic sim ticks
+  max_speed: 100        # cap for the dashboard time-control multiplier
+  start_species: 6      # seed species at genesis
+  start_population: 4000
+
+governor:
+  enabled: true
+  backend: ollama
+  model: "jaahas/qwen3.5-uncensored:2b"   # swappable; any Ollama model id
+  base_url: "http://localhost:11434"
+  tick_seconds: 20      # how often the world spirit deliberates
+  temperature: 0.9      # creative; the spirit should surprise us
+  max_tokens: 800
+  timeout_seconds: 45
+  think: false          # qwen3.x burns its budget "thinking"; keep off for low latency
+  keep_alive: "10m"     # keep the spirit's 2B warm so journaling doesn't reload it
+  # rare god-mode events the spirit may trigger, and their base per-tick odds
+  event_base_chance: 0.05
+
+server:
+  host: "0.0.0.0"
+  port: 8080
+  broadcast_hz: 12      # live (units/markers) pushes per second — smooth motion
+  # send the full terrain grid only every N broadcasts (it's heavy)
+  terrain_every: 120
+
+telemetry:
+  history_max_events: 5000
+  metrics_window: 2000  # samples retained per time-series
+
+persistence:
+  enabled: true
+  autosave_slot: "autosave"
+  autosave_ticks: 250
+  autosave_on_boot: true
+
+# Society Intelligence Stack: a 27B teacher reasons over whole cohorts of citizens,
+# every output trains a live liquid (CfC) "student" net on the GPU, and the student
+# progressively takes over the population's moment-to-moment cognition.
+mind:
+  enabled: true
+  teacher_model: "vaultbox/qwen3.5-uncensored:27b"   # GPU is idle; afford a big teacher
+  teacher_max_tokens: 2560
+  teacher_num_ctx: 6144     # cap the 27B's KV cache so it stays in 24GB VRAM
+  teacher_timeout: 180
+  keep_alive: "30m"         # keep the 27B resident in VRAM between cohorts (no reloads)
+  cohort_interval: 12       # seconds between teacher cohort calls (NEVER per-agent)
+  # small enough that the 27B + KV cache fit in 24GB VRAM (big cohorts spilled it to
+  # CPU and made each call crawl). The system runs many small cohorts instead.
+  cohort_size: 60           # max citizens compressed into a single call
+  min_samples: 40           # behavior samples before the student starts training
+  train_interval: 0.4       # seconds between background student train steps
+  batch_size: 256
+  warmup_steps: 20
+  hidden: 192               # CfC width — raise to make the 4090 sweat harder
+  layers: 3
+  confidence_gate: 0.45     # teacher-agreement at which the student drives everyone
+  dataset_dir: "saves/society_dataset"
+  # Opt-in: warm-start the student from your own external JSONL reasoning traces.
+  # Leave disabled unless you point trace_paths at directories that exist on your machine.
+  ingest_traces: false
+  trace_paths: []
+  trace_max_samples: 2000

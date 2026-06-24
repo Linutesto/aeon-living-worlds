@@ -1,0 +1,30 @@
+{
+  "name": "snowy-ice-age",
+  "label": "Snowy Ice Age",
+  "description": "A frozen world \u2014 snowfields, ice rivers, pale blue light.",
+  "remap": {
+    "grass": "snow",
+    "dry_grass": "snow",
+    "forest_floor": "snow",
+    "moss": "snow",
+    "mud": "ice",
+    "mud_wet": "ice",
+    "dirt": "snow",
+    "farmland": "snow",
+    "beach": "ice",
+    "marsh": "ice",
+    "dirt_road": "packed_earth"
+  },
+  "water": {
+    "color": "#8fb6cf",
+    "opacity": 0.7
+  },
+  "grade": {
+    "exposure": 1.1,
+    "fog": "#d6e6f2",
+    "tint": "#dfeefc",
+    "saturation": 0.85
+  },
+  "particles": "snow",
+  "disableHeavy": false
+}

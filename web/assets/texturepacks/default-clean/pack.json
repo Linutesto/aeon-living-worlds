@@ -1,0 +1,18 @@
+{
+  "name": "default-clean",
+  "label": "Default Clean",
+  "description": "The neutral baseline \u2014 true-to-source albedo, balanced grading.",
+  "remap": {},
+  "water": {
+    "color": "#2f6f86",
+    "opacity": 0.82
+  },
+  "grade": {
+    "exposure": 1.0,
+    "fog": "#bcd0dc",
+    "tint": "#ffffff",
+    "saturation": 1.0
+  },
+  "particles": "none",
+  "disableHeavy": false
+}

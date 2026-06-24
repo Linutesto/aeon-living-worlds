@@ -1,0 +1,37 @@
+{
+  "seed": 42,
+  "width": 192,
+  "height": 192,
+  "name": "The Long Winter",
+  "start_species": 6,
+  "start_population": 4000,
+  "start_civilizations": 5,
+  "params": {
+    "rainfall_multiplier": 0.6,
+    "temperature_bias": -14.0,
+    "storm_intensity": 1.6,
+    "sea_level": 0.0,
+    "volcanic_activity": 0.0,
+    "tectonic_drift": 0.0,
+    "resource_richness": 1.0,
+    "plant_growth": 0.5,
+    "prey_fertility": 0.6,
+    "predator_fertility": 1.0,
+    "mutation_rate": 0.02,
+    "carrying_capacity": 0.6,
+    "civ_expansion_drive": 1.0,
+    "war_propensity": 1.0,
+    "tech_progress": 1.0
+  },
+  "presentation": {
+    "graphics_preset": "desktop",
+    "texture_pack": "snowy-ice-age",
+    "lod_distance": 1.0,
+    "max_buildings": 18000,
+    "max_particles": 6000,
+    "max_lights": 800,
+    "city_density": 1.0,
+    "building_density": 1.0,
+    "road_density": 1.0
+  }
+}

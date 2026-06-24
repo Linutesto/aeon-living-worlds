@@ -1,0 +1,44 @@
+{
+  "packs": [
+    {
+      "name": "default-clean",
+      "label": "Default Clean",
+      "description": "The neutral baseline \u2014 true-to-source albedo, balanced grading."
+    },
+    {
+      "name": "realistic-medieval",
+      "label": "Realistic Medieval",
+      "description": "Warm, earthy stone-and-thatch towns under a low golden sun."
+    },
+    {
+      "name": "snowy-ice-age",
+      "label": "Snowy Ice Age",
+      "description": "A frozen world \u2014 snowfields, ice rivers, pale blue light."
+    },
+    {
+      "name": "volcanic-ash",
+      "label": "Volcanic Ash",
+      "description": "Scorched basalt and ashfall, embers glowing in a dark haze."
+    },
+    {
+      "name": "lush-green",
+      "label": "Lush Green",
+      "description": "Verdant overgrowth \u2014 deep grass, mossy stone, vivid foliage."
+    },
+    {
+      "name": "desert-dry",
+      "label": "Desert Dry",
+      "description": "Sun-baked dunes, cracked earth, and dust on a hot wind."
+    },
+    {
+      "name": "dark-fantasy",
+      "label": "Dark Fantasy",
+      "description": "A grim, desaturated realm of cold stone and brooding fog."
+    },
+    {
+      "name": "performance-low",
+      "label": "Performance (Low)",
+      "description": "Flat albedo, no heavy effects \u2014 maximum FPS for weak GPUs/mobile."
+    }
+  ]
+}

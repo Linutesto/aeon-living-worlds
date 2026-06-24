@@ -1,0 +1,27 @@
+{
+  "name": "desert-dry",
+  "label": "Desert Dry",
+  "description": "Sun-baked dunes, cracked earth, and dust on a hot wind.",
+  "remap": {
+    "grass": "sand",
+    "dry_grass": "sand",
+    "forest_floor": "packed_earth",
+    "moss": "dry_grass",
+    "mud": "packed_earth",
+    "farmland": "dry_grass",
+    "snow": "sand",
+    "beach": "sand"
+  },
+  "water": {
+    "color": "#3f7d80",
+    "opacity": 0.78
+  },
+  "grade": {
+    "exposure": 1.08,
+    "fog": "#e6d2a6",
+    "tint": "#fff0cf",
+    "saturation": 1.02
+  },
+  "particles": "dust",
+  "disableHeavy": false
+}

@@ -1,0 +1,22 @@
+{
+  "name": "realistic-medieval",
+  "label": "Realistic Medieval",
+  "description": "Warm, earthy stone-and-thatch towns under a low golden sun.",
+  "remap": {
+    "stone_road": "cobblestone",
+    "wood_shingle": "thatch",
+    "plaster": "clay_wall"
+  },
+  "water": {
+    "color": "#3a6a78",
+    "opacity": 0.84
+  },
+  "grade": {
+    "exposure": 1.04,
+    "fog": "#cdbfa4",
+    "tint": "#ffeeda",
+    "saturation": 1.05
+  },
+  "particles": "dust",
+  "disableHeavy": false
+}
