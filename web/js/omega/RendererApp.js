@@ -2064,8 +2064,11 @@ function buildCityLights(skylines) {
       if (s.plague) color.lerp(new THREE.Color(0xb694ff), 0.42);
       if ((s.unrest || 0) > 0.55 || (s.war || 0) > 0.55) color.lerp(new THREE.Color(0xff7a58), 0.35);
       const flicker = 0.82 + stable01(`${seed}:light-f:${i}`) * 0.34;
-      colors.push(color.r * intensity * flicker, color.g * intensity * flicker, color.b * intensity * flicker);
-      sizes.push(0.55 + intensity * 1.65 + (s.wealth || 0) * 0.65);
+      // additive blending stacks overlapping lights well past 1.0; keep each point's
+      // contribution modest so a dense city reads as many warm windows, not one blob.
+      const glow = 0.66 * intensity * flicker;
+      colors.push(color.r * glow, color.g * glow, color.b * glow);
+      sizes.push(0.44 + intensity * 1.1 + (s.wealth || 0) * 0.46);
     }
   }
   if (!positions.length) return;
@@ -2078,7 +2081,7 @@ function buildCityLights(skylines) {
     transparent: true, opacity: 0.0, depthWrite: false,
     blending: THREE.AdditiveBlending,
   });
-  mat.userData.baseOpacity = 0.9;
+  mat.userData.baseOpacity = 0.74;
   const pts = new THREE.Points(geo, mat);
   pts.renderOrder = 8;
   cityLightGroup.add(pts);
@@ -2447,6 +2450,18 @@ function updateAtmosphere() {
   if (sunDisc) sunDisc.visible = night < 0.9;
   renderer.toneMappingExposure = (1.02 + noon * 0.28 + Math.max(dawn, dusk) * 0.12
     - night * 0.14) * (packGrade.exposure || 1.0);
+  // Night-aware bloom. At night the city lights are the only bright thing in a dark
+  // scene, so a constant bloom strength blows them into one white wash (the classic
+  // over-bloom). Ease strength + radius down and lift the threshold as night deepens,
+  // so lights read as crisp warm points with a tasteful halo instead of a smear. Day is
+  // unchanged (night = 0). dusk gets a partial reduction so the transition stays smooth.
+  if (bloomPass) {
+    const k = Math.max(night, dusk * 0.6);
+    const base = (renderOptions.bloomStrength ?? 0.7) * (quality.mode === "Ultra" ? 1.15 : 1.0);
+    bloomPass.strength = base * (1 - 0.6 * k);   // gentle halo at night, not a wash
+    bloomPass.radius = 0.5 - 0.17 * k;
+    bloomPass.threshold = 0.82 + 0.1 * k;        // only the bright cores bloom
+  }
   // active texture pack tints the daytime fog toward its mood (dawn/night still win)
   if (packGrade.fog && scene?.fog) {
     scene.fog.color.lerp(packGrade.fog, 0.35 * (1 - night) * (1 - Math.max(dawn, dusk)));
