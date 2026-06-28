@@ -18,6 +18,29 @@ watch and steer it all from a real-time 3D dashboard built mobile-first.
 
 ---
 
+## ⚡ Part of an open, local-first research program
+
+AEON is one project from **[Éthiqueia](https://yandesbiens.com)** — my independent AI
+research lab. Solo, local-first, on a single RTX 4090, in Saguenay. The lab ships **proof
+drops**: small, reproducible benchmarks with the code, the numbers, *and* the honest failure
+case. If AEON's no-cloud, run-it-yourself stance is your thing, the rigorously benchmarked
+side of the lab is probably your speed too:
+
+- 🧠 **[UFM](https://github.com/Linutesto/ufm)** — run a model *larger than your VRAM* on a
+  single GPU. ~240× faster than naive offload; honest no-locality failure case.
+  → [benchmark writeup](https://yandesbiens.com/blog/ufm-benchmark/)
+- 🌳 **[FMM](https://github.com/Linutesto/fmm)** — memory that pages itself: topic-scoped
+  retrieval, and a near-free router that recovers ~98% of oracle recall at ~60× flat-scan
+  speed. → [benchmark writeup](https://yandesbiens.com/blog/fmm-router/)
+
+**→ Follow the work:** [the lab](https://yandesbiens.com) ·
+[newsletter](https://yandesbiens.com/newsletter/) — one short email per proof drop, no spam ·
+[the full research map](https://yandesbiens.com/research/)
+
+*AEON is the world-model corner of that program — framed as engineering, not a claim.*
+
+---
+
 ## 1. What is AEON?
 
 AEON couples a **deterministic Tier-0 simulation** (the source of truth for every
