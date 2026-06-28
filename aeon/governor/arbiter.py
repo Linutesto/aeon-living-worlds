@@ -8,9 +8,9 @@ hitting one Ollama on one GPU. Fired freely they thrash VRAM and the slow, valua
 This scheduler makes the scarce resource behave:
 
   * one gate, `max_concurrent` (default 1 — a single GPU can't parallelize generation);
-  * **priority** classes, with player interviews at the top and a **protected band**
-    (interview/governor/teacher) that is never throttled;
-  * **player preemption**: a waiting interview can cancel a non-interview in-flight call
+  * **priority** classes, with player-facing calls at the top and a **protected band**
+    (interview/player narration/governor/teacher) that is never throttled;
+  * **player preemption**: a waiting player call can cancel a non-player in-flight call
     so the person at the keyboard is not stuck behind simulation prose;
   * **starvation aging** so two low-priority classes don't deadlock each other;
   * per-consumer **cooldowns** and **quotas**, and a rolling **token budget** — when a
@@ -34,6 +34,7 @@ from collections import deque
 
 # priority bands (lower wins) — kept as module constants for back-compat
 INTERVIEW = 0
+PLAYER_NARRATION = 0
 TEACHER = 1
 GOVERNOR = 2
 CHRONICLE = 6
@@ -43,6 +44,7 @@ NARRATION = 8
 # consumer registry: name -> (priority, cooldown_s, quota_share of recent window)
 CONSUMERS: dict[str, tuple[int, float, float]] = {
     "citizen_interview": (0, 0.0, 1.0),
+    "player_narration":  (0, 0.0, 1.0),
     "cohort_teacher":    (1, 0.0, 1.0),
     "spirit_governor":   (2, 0.0, 1.0),
     "rare_citizen":      (3, 4.0, 0.30),
@@ -54,8 +56,9 @@ CONSUMERS: dict[str, tuple[int, float, float]] = {
     "narration":         (8, 5.0, 0.30),
     "diagnostics":       (9, 30.0, 0.10),
 }
-PROTECTED = {"spirit_governor", "cohort_teacher", "citizen_interview"}
-PREEMPTORS = {"citizen_interview"}
+PROTECTED = {"spirit_governor", "cohort_teacher", "citizen_interview",
+             "player_narration"}
+PREEMPTORS = {"citizen_interview", "player_narration"}
 PROTECTED_CEILING = 3        # aging can lift a non-protected job no higher than this
 AGE_STEP = 5.0               # seconds of waiting per +1 effective-priority step
 DEFAULT_BUDGET = 60_000      # token budget per rolling 60s window

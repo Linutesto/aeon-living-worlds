@@ -1973,7 +1973,8 @@ class Engine:
                                           + min(1.0, p.wealth / 30)) / 2), 2),
         }
 
-    async def _narrate(self, kind: str, key, sig: str, system: str, facts: str) -> dict:
+    async def _narrate(self, kind: str, key, sig: str, system: str, facts: str, *,
+                       consumer: str = "narration") -> dict:
         """Shared cached-LLM narration: return cached prose if the entity is unchanged,
         else generate (async, off the sim loop), cache it, and return. Grounded — the
         `facts` are pure simulation truth assembled by the caller."""
@@ -1981,7 +1982,7 @@ class Engine:
         if cached:
             return {"text": cached, "cached": True}
         text = (await self.governor.llm.complete(
-            system, facts, format_json=False, consumer="narration",
+            system, facts, format_json=False, consumer=consumer,
             cache_key=f"narr:{kind}:{key}:{sig}", tick=self.world.tick,
             meta={"city": str(key)}) or "").strip()
         if text and not text.startswith("(…"):
@@ -1997,7 +1998,8 @@ class Engine:
             p, self.world, self.society, self.life_chronicle(p),
             self.family_tree(pid) or {})
         r = await self._narrate("bio", pid, interpret_mod.person_signature(p),
-                                interpret_mod.BIO_SYSTEM, facts)
+                                interpret_mod.BIO_SYSTEM, facts,
+                                consumer="player_narration")
         return {"id": pid, "name": p.name, "biography": r["text"], "cached": r["cached"]}
 
     async def city_history(self, cid: int) -> dict:
@@ -2011,7 +2013,8 @@ class Engine:
         chron = self.city_chronicle(c)
         facts = interpret_mod.build_city_facts(c, self.world, civ, rel, share, chron)
         r = await self._narrate("city", cid, interpret_mod.city_signature(c, len(chron)),
-                                interpret_mod.CITY_SYSTEM, facts)
+                                interpret_mod.CITY_SYSTEM, facts,
+                                consumer="player_narration")
         return {"id": cid, "name": c.name, "history": r["text"], "cached": r["cached"]}
 
     async def religion_history(self, rid: int) -> dict:
@@ -2024,7 +2027,8 @@ class Engine:
         facts = interpret_mod.build_religion_facts(rel, self.world, self.population, followers)
         r = await self._narrate("relig", rid,
                                 interpret_mod.religion_signature(rel, followers),
-                                interpret_mod.RELIGION_SYSTEM, facts)
+                                interpret_mod.RELIGION_SYSTEM, facts,
+                                consumer="player_narration")
         return {"id": rid, "name": rel.name, "history": r["text"], "cached": r["cached"]}
 
     async def culture_history(self, cid: int) -> dict:
@@ -2037,7 +2041,8 @@ class Engine:
             culture, self.world, city, culture.history[-8:])
         r = await self._narrate("culture", cid,
                                 interpret_mod.culture_signature(culture, self.world),
-                                interpret_mod.CULTURE_SYSTEM, facts)
+                                interpret_mod.CULTURE_SYSTEM, facts,
+                                consumer="player_narration")
         return {"id": cid, "name": culture.name, "history": r["text"], "cached": r["cached"]}
 
     async def discovery_narrative(self, key: str) -> dict:
@@ -2052,7 +2057,8 @@ class Engine:
         sig = interpret_mod.discovery_signature(found)
         facts = interpret_mod.build_discovery_facts(self.world, found)
         r = await self._narrate("discovery", key, sig,
-                                interpret_mod.DISCOVERY_SYSTEM, facts)
+                                interpret_mod.DISCOVERY_SYSTEM, facts,
+                                consumer="player_narration")
         return {"key": key, "narrative": r["text"], "cached": r["cached"],
                 "discovery": found}
 

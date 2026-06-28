@@ -1,6 +1,6 @@
 """The LLM scheduler: priority economy, budget, quotas, dedup, stale, fallbacks.
 
-Verifies the call-economy guarantees: player interviews can preempt non-player calls,
+Verifies the call-economy guarantees: player requests can preempt non-player calls,
 the protected band is never starved, abundant low-priority reports/flavor are
 delayed/throttled, duplicate jobs collapse, stale jobs cancel, and throttled
 low-priority work gets a cheap fallback.
@@ -151,6 +151,39 @@ def test_interview_does_not_preempt_when_slot_is_available():
     assert teacher_result == "teacher-result"
     assert events == ["teacher-start", "interview-start", "teacher-finished"]
     assert s.stats["cohort_teacher"]["skipped"] == 0
+
+
+def test_player_narration_preempts_background_narration():
+    s = LLMScheduler()
+    events: list[str] = []
+
+    async def background():
+        events.append("background-start")
+        try:
+            await asyncio.sleep(1)
+            events.append("background-finished")
+            return "background-result"
+        except asyncio.CancelledError:
+            events.append("background-cancelled")
+            raise
+
+    async def biography():
+        events.append("biography-start")
+        return "life story"
+
+    async def main():
+        bg = asyncio.create_task(
+            s.run(background, consumer="narration", fallback="background-deferred"))
+        await asyncio.sleep(0.02)
+        story = await s.run(biography, consumer="player_narration")
+        deferred = await bg
+        return story, deferred
+
+    story, deferred = _run(main())
+    assert story == "life story"
+    assert deferred == "background-deferred"
+    assert events == ["background-start", "background-cancelled", "biography-start"]
+    assert s.stats["narration"]["skipped"] == 1
 
 
 def test_dedup_collapses_identical_jobs():
