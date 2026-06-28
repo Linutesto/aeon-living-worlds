@@ -21,6 +21,7 @@ import logging
 
 import numpy as np
 
+from . import spatial
 from . import traits
 from .person import Person, Relationship
 
@@ -69,6 +70,12 @@ class PopulationManager:
         self._last_life_tick = 0
         # learning signal buffer for the species policies (ai/species_policy.py)
         self.experience: list[dict] = []
+        self.spatial_index = spatial.SpatialIndex()
+        self.spatial_counters: dict[str, float] = {
+            "positioned": 0, "moving": 0, "paths_requested": 0,
+            "path_failed": 0, "path_length_sum": 0, "movement_events": 0,
+            "spatial_replay_samples": 0,
+        }
 
     # ------------------------------------------------------------------ ids
     def _nid(self) -> int:
@@ -192,6 +199,7 @@ class PopulationManager:
                     0.0, 1.0)), 2),
                 local_identity=f"a child of {city.name}",
             )
+            spatial.initialize_person_position(world, person, city)
             self._occupy_buildings(city, person)
             # a couple of seeded memories grounded in real history
             person.remember(f"I was born in {city.name}, a {city.specialty.lower()}.",
@@ -250,12 +258,14 @@ class PopulationManager:
     def tick(self, world) -> list[dict]:
         """Advance the lives of active individuals. Cheap: only agents in focused
         (or notable) sets get a life update, and only every LIFE_INTERVAL ticks."""
+        move_events = self._advance_movements(world)
         if world.tick - self._last_life_tick < LIFE_INTERVAL:
-            return []
+            return move_events
         self._last_life_tick = world.tick
-        events: list[dict] = []
+        events: list[dict] = move_events
         active = [self.people[pid] for pid in self._active_ids()
                   if self.people.get(pid) and self.people[pid].alive]
+        self._rebuild_spatial(active)
         # one batched student forward decides who the liquid net drives this tick
         decisions: dict[int, dict] = {}
         mind = getattr(world, "society_mind", None)
@@ -279,6 +289,34 @@ class PopulationManager:
                 ids.add(p.id)
         return list(ids)
 
+    def _rebuild_spatial(self, persons: list[Person] | None = None) -> None:
+        active = persons if persons is not None else [
+            self.people[pid] for pid in self._active_ids()
+            if self.people.get(pid) and self.people[pid].alive
+        ]
+        self.spatial_index.rebuild(active)
+        self.spatial_counters["positioned"] = sum(
+            1 for p in self.people.values()
+            if p.alive and getattr(p, "position", None) is not None)
+        self.spatial_counters["moving"] = sum(
+            1 for p in self.people.values() if p.alive and getattr(p, "moving", False))
+
+    def _advance_movements(self, world) -> list[dict]:
+        events: list[dict] = []
+        for pid in self._active_ids():
+            p = self.people.get(pid)
+            if not p or not p.alive:
+                continue
+            ev = spatial.advance_movement(world, p)
+            if ev:
+                events.append(ev)
+                self.spatial_counters["movement_events"] = \
+                    self.spatial_counters.get("movement_events", 0) + 1
+                if ev.get("action") == "migrate":
+                    events += self._complete_migration(world, p)
+        self._rebuild_spatial()
+        return events
+
     def _live_one(self, world, p: Person, decision: dict | None = None) -> list[dict]:
         events: list[dict] = []
         p.age += 1
@@ -301,22 +339,49 @@ class PopulationManager:
         if world.rng.stream("agent").random() < death_p:
             return self._die(world, p, city)
 
+        if getattr(p, "moving", False) and (getattr(p, "current_action", {}) or {}).get("type") == "migrate":
+            p.last_action = "migrate"
+            self._record_experience(world, p, "migrate", city)
+            return events
+
         # the liquid student drives this person if the hybrid mind routed them here;
         # otherwise fall back to Level-1 utility cognition (optionally species-biased).
         if decision is not None:
-            action = decision["action"]
+            action_obj = self._coerce_action(world, p, city, decision)
+            action = action_obj["type"]
             p.emotion = decision.get("emotion", p.emotion)
             p.intent = decision.get("intent", p.intent)
             p.mind_source = "student"
         else:
             action = traits.choose_action(p, city, world,
                                           policy_bias=self._policy_bias(world, p))
+            action_obj = self._coerce_action(world, p, city, action)
             if p.mind_source != "teacher":
                 p.mind_source = "utility"
         p.last_action = action
+        spatial.begin_movement(world, p, action_obj, self.spatial_counters)
         events += self._apply_action(world, p, city, action)
         self._record_experience(world, p, action, city)
         return events
+
+    def _coerce_action(self, world, p: Person, city, decision) -> dict:
+        if isinstance(decision, dict) and isinstance(decision.get("action"), dict):
+            action_obj = dict(decision["action"])
+            action_type = action_obj.get("type") or "rest"
+        elif isinstance(decision, dict):
+            action_type = str(decision.get("action") or "rest")
+            action_obj = {}
+        else:
+            action_type = str(decision or "rest")
+            action_obj = {}
+        action_type = action_type if action_type in traits.ACTIONS else "rest"
+        target = spatial.choose_target(
+            world, self, p, action_type, city, self.spatial_index)
+        if isinstance(decision, dict) and decision.get("target_kind"):
+            target["target_kind"] = str(decision["target_kind"])
+        target.update({k: v for k, v in action_obj.items() if v not in (None, "", [])})
+        target["type"] = action_type
+        return target
 
     def _advance_plans(self, world, p: Person) -> list[dict]:
         out: list[dict] = []
@@ -339,7 +404,9 @@ class PopulationManager:
                 out.append(self._ev(world, "rumor", f"{p.name} began recruiting",
                                     f"{p.name} quietly tested who would join a movement."))
             elif kind == "migrate":
-                out += self._try_migrate(world, p)
+                city = world.cities.get(p.home_city) if p.home_city else None
+                action_obj = spatial.choose_target(world, self, p, "migrate", city, self.spatial_index)
+                spatial.begin_movement(world, p, action_obj, self.spatial_counters)
             elif kind == "trade" and city:
                 p.wealth += 0.8
                 city.wealth += 0.5
@@ -361,12 +428,16 @@ class PopulationManager:
             p.wealth += gain
             core = max(p.skills, key=p.skills.get)
             p.skills[core] = min(1.0, p.skills[core] + 0.01)
+        elif action == "feed":
+            p.health = min(1.0, p.health + (0.04 if city and city.famine == 0 else 0.015))
+            p.stress = max(0.0, p.stress - 0.03)
         elif action == "court" and p.partner_id is None:
             out += self._try_marriage(world, p, city)
         elif action == "feud":
             out += self._try_feud(world, p, city)
         elif action == "migrate" and city:
-            out += self._try_migrate(world, p)
+            # Migration is now spatial: the home city changes only when the path arrives.
+            pass
         elif action == "study":
             p.skills["scholarship"] = min(1.0, p.skills.get("scholarship", 0) + 0.02)
             if rng.random() < 0.05:
@@ -377,6 +448,16 @@ class PopulationManager:
             self._socialize(world, p)
         elif action == "worship":
             p.remember("I prayed for my family's safety.", "faith", world.tick, 0.2)
+        elif action == "trade" and city:
+            p.wealth += 0.12 + 0.08 * p.skills.get("trade", 0.0)
+            city.wealth += 0.08
+        elif action == "join_army":
+            p.skills["combat"] = min(1.0, p.skills.get("combat", 0.0) + 0.025)
+            p.status = min(1.0, p.status + 0.01)
+        elif action in ("flee", "seek_shelter"):
+            p.stress = max(0.0, p.stress - 0.02)
+        elif action == "visit_city_center":
+            p.status = min(1.0, p.status + 0.005)
         # partnered adults may have a child
         if (p.partner_id and 18 <= p.age <= 45 and p.sex == "f"
                 and rng.random() < 0.06):
@@ -433,6 +514,7 @@ class PopulationManager:
         child.relate(mother.id, "family", 0.7, "parent")
         self.people[pid] = child
         if city:
+            spatial.initialize_person_position(world, child, city)
             self._occupy_buildings(city, child)
         mother.remember(f"My child {child.name} was born.", "birth", world.tick, 0.9, [pid])
         mother.milestones.append(f"Had a child, {child.name}.")
@@ -458,17 +540,26 @@ class PopulationManager:
         r.shift(-0.1)
         return []
 
-    def _try_migrate(self, world, p) -> list[dict]:
-        # move to another living city of any civ
-        dests = [c for c in world.cities.values()
-                 if c.alive and c.id != p.home_city and c.famine == 0]
-        if not dests:
+    def _complete_migration(self, world, p) -> list[dict]:
+        action = getattr(p, "current_action", {}) or {}
+        if action.get("type") != "migrate" or action.get("target_kind") != "city":
             return []
-        rng = world.rng.stream("agent")
-        dest = dests[int(rng.integers(0, len(dests)))]
+        tid = str(action.get("target_id") or "")
+        try:
+            dest_id = int(tid.split(":", 1)[1])
+        except (IndexError, ValueError):
+            return []
+        dest = world.cities.get(dest_id)
+        if not dest or not dest.alive:
+            return []
         old = world.cities.get(p.home_city)
+        if old and old.id == dest.id:
+            return []
         p.home_city = dest.id
         p.civ_id = dest.civ_id
+        p.home_building = self._building_id_for(dest, self._home_kind_for(p.social_class), p.id)
+        p.work_building = self._building_id_for(dest, self._work_kind_for(p.profession), p.id)
+        spatial.initialize_person_position(world, p, dest)
         p.rootedness = max(0.1, p.rootedness - 0.2)
         p.remember(f"I left {old.name if old else 'home'} for {dest.name}.",
                    "migration", world.tick, -0.3)
@@ -535,11 +626,16 @@ class PopulationManager:
         # reward signal for the species policy: thriving = wealth+health+status+kin
         reward = 0.3 * p.health + 0.3 * min(1, p.wealth / 20) + 0.2 * p.status \
                  + 0.2 * min(1, len(p.children) / 3)
+        obs = spatial.compact_observation(world, self, p, city, self.spatial_index)
         self.experience.append({"species_id": p.species_id, "action": action,
+                                 "target": getattr(p, "current_action", {}),
                                  "reward": reward, "features": self.features(p, city, world),
                                  "kind": "individual_thriving",
                                  "tick": world.tick, "person_id": p.id,
-                                 "city_id": city.id if city else None})
+                                 "city_id": city.id if city else None,
+                                 "spatial": obs})
+        self.spatial_counters["spatial_replay_samples"] = \
+            self.spatial_counters.get("spatial_replay_samples", 0) + 1
         if len(self.experience) > 20000:
             self.experience = self.experience[-10000:]
 
@@ -582,7 +678,7 @@ class PopulationManager:
                 total = sum(alive)
                 biodiversity = min(1.0, len([p0 for p0 in alive if p0 > 0]) / 30) if total else 0.0
         ideology = p.ideology or {}
-        return [
+        base = [
             pers.get("openness", .5), pers.get("conscientiousness", .5),
             pers.get("extraversion", .5), pers.get("agreeableness", .5),
             pers.get("neuroticism", .5),
@@ -596,6 +692,9 @@ class PopulationManager:
             max(climate_pressure, resource_pressure, war_pressure) * 0.6
             + biodiversity * 0.4,
         ]
+        if world is None:
+            return base + [0.0] * len(spatial.SPATIAL_FEATURES)
+        return base + spatial.spatial_feature_vector(world, None, p, city)
 
     # --------------------------------------------------------- budget / LOD
     def _enforce_budget(self) -> None:

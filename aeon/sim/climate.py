@@ -18,10 +18,10 @@ def initialize(world: "_w.WorldState") -> None:
     h, w = world.height, world.width
     lat = np.abs(np.linspace(-1, 1, h))[:, None] * np.ones((1, w), dtype=np.float32)
     # equator ~32C, poles ~-15C, minus a lapse rate with elevation
-    base = 32 - 47 * lat - 25 * np.maximum(world.elevation, 0)
+    base = 32 - 47 * lat - 25 * np.maximum(world.elevation, 0) + world.params.temperature_bias
     world.temperature = base.astype(np.float32)
-    world.humidity = np.clip(0.6 - 0.4 * lat, 0, 1).astype(np.float32)
-    world.rainfall = (world.humidity * 0.5).astype(np.float32)
+    world.humidity = np.clip(0.6 - 0.4 * lat + world.params.humidity_bias, 0, 1).astype(np.float32)
+    world.rainfall = np.clip(world.humidity * 0.5 * world.params.rainfall_multiplier, 0, 2).astype(np.float32)
     _w.terrain.classify_biomes(world)
 
 
@@ -35,7 +35,7 @@ def step(world: "_w.WorldState") -> None:
 
     # humidity rises near water, falls in heat
     near_water = (world.biome == _w.BIOME["ocean"]) | (world.water > 0.2)
-    target_h = np.where(near_water, 0.9, world.humidity * 0.95)
+    target_h = np.where(near_water, 0.9, world.humidity * 0.95 + p.humidity_bias * 0.08)
     world.humidity = np.clip(0.8 * world.humidity + 0.2 * target_h, 0, 1).astype(np.float32)
 
     rain = world.humidity * 0.6 * p.rainfall_multiplier

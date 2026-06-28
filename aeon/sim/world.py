@@ -40,7 +40,7 @@ BIOME = {
 }
 
 from . import (terrain, climate, resources, species, evolution,  # noqa: E402
-               civilization, cities, units, events)
+               civilization, cities, roads, units, events)
 
 
 @dataclass
@@ -67,6 +67,15 @@ class WorldState:
     minerals: np.ndarray = None         # type: ignore[assignment]
     food: np.ndarray = None             # type: ignore[assignment]
     energy: np.ndarray = None           # type: ignore[assignment]
+
+    # --- worldgen / settlement analysis layers ---
+    terrain_slope: np.ndarray = None      # type: ignore[assignment]
+    water_distance: np.ndarray = None     # type: ignore[assignment]
+    mountain_distance: np.ndarray = None  # type: ignore[assignment]
+    buildable_score: np.ndarray = None    # type: ignore[assignment]
+    road_access: np.ndarray = None        # type: ignore[assignment]
+    road_graph: list[dict] = field(default_factory=list)
+    generation_report: dict = field(default_factory=dict)
 
     # --- living things ---
     species: dict[int, "Species"] = field(default_factory=dict)
@@ -136,24 +145,58 @@ def create_world(cfg, params: "WorldParams | None" = None) -> WorldState:
     `params` lets a restart inject player-chosen generation knobs (sea level,
     resource richness, carrying capacity, …) *before* seeding — genesis reads them, so
     they shape the world deterministically. Omitted ⇒ defaults (original behavior)."""
-    rng = RNG(cfg.world.seed)
-    world = WorldState(
-        cfg=cfg,
-        rng=rng,
-        params=params if params is not None else WorldParams.from_defaults(),
-        width=cfg.world.width,
-        height=cfg.world.height,
-    )
-    terrain.generate(world)     # initial heightmap, oceans, rivers, caves
-    climate.initialize(world)   # initial temperature/humidity fields
-    resources.seed(world)       # scatter minerals/food/energy
+    base_params = params if params is not None else WorldParams.from_defaults()
+    world, report = _build_valid_world_shell(cfg, base_params)
+    world.generation_report = report
     species.seed(world, n=cfg.sim.start_species, total_pop=cfg.sim.start_population)
     # genesis of nations: open onto a plural world of distinct rival civilizations,
     # not a single people that slowly emerges. (Founding events go to the timeline via
     # the engine's genesis bootstrap.)
     n_civs = int(getattr(cfg.sim, "start_civilizations", 5))
     world.genesis_events = civilization.seed_initial(world, n=n_civs)
+    terrain.compute_buildable_score(world)
+    roads.rebuild(world)
     return world
+
+
+def _build_valid_world_shell(cfg, params: WorldParams) -> tuple[WorldState, dict]:
+    max_attempts = 24
+    rejected: list[dict] = []
+    best_world: WorldState | None = None
+    best_report: dict | None = None
+    best_score = -1.0
+    for attempt in range(max_attempts):
+        seed = int(cfg.world.seed) + attempt * 104729
+        world = WorldState(
+            cfg=cfg,
+            rng=RNG(seed),
+            params=params,
+            width=cfg.world.width,
+            height=cfg.world.height,
+        )
+        terrain.generate(world)
+        climate.initialize(world)
+        resources.seed(world)
+        terrain.analyze_terrain(world)
+        ok, stats = terrain.validate_terrain(
+            world, min_cities=int(getattr(cfg.sim, "start_civilizations", 5))
+        )
+        score = (
+            stats["largest_landmass_fraction"] * 0.34
+            + min(1.0, stats["good_buildable_tiles"] / 500.0) * 0.28
+            + min(1.0, stats["river_tiles"] / 450.0) * 0.18
+            + (1.0 - abs(stats["land_ratio"] - params.land_percent)) * 0.20
+        )
+        if score > best_score:
+            best_world, best_report, best_score = world, stats, score
+        if ok:
+            return world, {**stats, "accepted_seed": seed, "attempts": attempt + 1,
+                           "rejected": rejected[:10], "valid": True}
+        rejected.append({"seed": seed, **stats})
+    assert best_world is not None and best_report is not None
+    return best_world, {**best_report, "accepted_seed": best_world.rng.seed,
+                        "attempts": max_attempts, "rejected": rejected[:10],
+                        "valid": False, "fallback": True}
 
 
 def tick(world: WorldState) -> list[dict]:
@@ -169,6 +212,7 @@ def tick(world: WorldState) -> list[dict]:
     new_events += evolution.step(world)    # mutations, speciation, extinction
     new_events += civilization.step(world) # civ emergence, diplomacy, war intents
     new_events += cities.step(world)       # city economy, growth, expansion
+    roads.step(world)                      # refresh settlement road graph/access lazily
     new_events += units.step(world)        # spawn + move people; resolve arrivals
     new_events += events.step(world)       # decay active god-mode events
     remember_historical_sites(world, new_events)

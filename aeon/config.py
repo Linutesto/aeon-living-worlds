@@ -40,7 +40,8 @@ class GovernorConfig:
     model: str = "jaahas/qwen3.5-uncensored:2b"
     base_url: str = "http://localhost:11434"
     flavor_interval: float = 14.0      # seconds between async world-flavor pieces
-    tick_seconds: float = 20.0
+    tick_seconds: float = 0.0
+    tick_seconds = None  # deprecated: synced to engine.world.tick loop
     temperature: float = 0.9
     max_tokens: int = 800
     timeout_seconds: float = 45.0
@@ -92,11 +93,31 @@ class MindConfig:
     batch_size: int = 256
     min_samples: int = 40                 # behavior samples needed before training
     swap_every: int = 5                   # publish weights every N train steps
+    val_fraction: float = 0.12            # held-out share for validation metrics + drift
+    val_every: int = 25                   # validate every N train steps
+    awr_beta: float = 1.0                 # advantage-weighted regression temperature
+    balance_actions: bool = False         # class-balanced replay sampling (vs prioritized)
+    min_for_split: int = 256              # corpus size before a val split is held out
     warmup_steps: int = 20                # train steps before the student drives anyone
-    hidden: int = 192                     # CfC width — scale up to make the GPU sweat
-    layers: int = 3
+    # Student size. Named sizes (tiny~0.7M / small~3M / medium~10M / large~15M) resolve
+    # to (hidden, layers) in mind/liquid.py:MODEL_SIZES. Leave hidden/layers None to use
+    # the size; set them to pin raw dims for an experiment (they override the size).
+    student_size: str = "tiny"
+    hidden: int | None = None             # CfC width — None ⇒ derived from student_size
+    layers: int | None = None
+    # Tiered cognition: most citizens run the cheap utility model; only a bounded set of
+    # embodied citizens run the liquid student each life-tick (one batched GPU forward).
+    # The teacher (27B) supervises crisis cohorts. These knobs are surfaced in the UI.
+    active_embodied_citizens: int = 240   # max citizens the student may drive per tick
+    teacher_sampling_rate: float = 1.0    # 0..1 — fraction of training batch drawn from
+    #                                       teacher labels at cold start (decays as the
+    #                                       student earns trust; see trainer._teacher_ratio)
+    autonomy_ratio: float = 0.7           # ceiling on the student's population share once
+    #                                       fully trusted (1.0 = it may drive everyone)
     lr: float = 2e-3
     confidence_gate: float = 0.45         # agreement at which the student drives all
+    min_teacher_agreement: float = 0.74   # below this, student cannot drive population
+    population_takeover_threshold: float = 0.82
     dataset_dir: str = "saves/society_dataset"
     weights_slot: str = "society_mind"
     ingest_traces: bool = False           # opt-in: seed the corpus from external traces

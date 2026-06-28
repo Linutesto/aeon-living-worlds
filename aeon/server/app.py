@@ -113,6 +113,34 @@ def create_app(cfg: Config) -> FastAPI:
         # exposed as REST for direct inspection and as a dashboard fallback.
         return JSONResponse(request.app.state.engine.serialize_mind())
 
+    @app.post("/api/mind/tune")
+    async def mind_tune(request: Request):
+        # safe live knobs for the Society Intelligence Stack (autonomy ceiling + how many
+        # embodied citizens the student may drive). Funnels through engine.tune_mind.
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001
+            body = {}
+        return JSONResponse(request.app.state.engine.tune_mind(**(body or {})))
+
+    @app.post("/api/mind/model")
+    async def mind_model(request: Request):
+        # resize the liquid student net live (named size or raw hidden/layers). This
+        # rebuilds the net and discards trained weights, so it's a separate path from
+        # the safe scalar knobs in /api/mind/tune. Funnels through engine.rebuild_mind_model.
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001
+            body = {}
+        body = body or {}
+        size = body.get("size")
+        hidden = body.get("hidden")
+        layers = body.get("layers")
+        res = request.app.state.engine.rebuild_mind_model(
+            size=size, hidden=hidden if hidden not in ("", None) else None,
+            layers=layers if layers not in ("", None) else None)
+        return JSONResponse(res, status_code=200 if res.get("ok") else 400)
+
     @app.get("/api/llm/scheduler")
     async def llm_scheduler(request: Request):
         return JSONResponse(request.app.state.engine.llm_arbiter.status())

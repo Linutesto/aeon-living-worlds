@@ -35,6 +35,7 @@ from .telemetry.history import History
 from .telemetry.metrics import Metrics
 from .telemetry import stats as stats_mod
 from .agents.population import PopulationManager
+from .agents import spatial as spatial_mod
 from .agents import interview as interview_mod
 from .agents import schedule as schedule_mod
 from .sim import season as season_mod
@@ -842,13 +843,106 @@ class Engine:
             if p.alive:
                 mix[p.mind_source] = mix.get(p.mind_source, 0) + 1
         st["population_mix"] = mix
+        st["spatial"] = self.spatial_debug()
         if self.teacher is not None:
             st["teacher"] = {**self.teacher.status(),
                              "model": self.cfg.mind.teacher_model,
                              "online": getattr(self._teacher_llm, "online", None)}
         st["arbiter"] = self.llm_arbiter.status()
+        # checkpoint status for the dashboard (the student's weights are saved to this
+        # slot every ~400 train steps and on shutdown).
+        try:
+            slot = self.cfg.mind.weights_slot
+            wpath = self.save_store.weights_path(slot)
+            st["checkpoint"] = {"slot": slot, "exists": Path(wpath).exists()}
+        except Exception:  # noqa: BLE001
+            st["checkpoint"] = {"slot": getattr(self.cfg.mind, "weights_slot", ""),
+                                "exists": False}
         st["enabled"] = True
         return st
+
+    def tune_mind(self, **knobs) -> dict:
+        """Apply safe, live-tunable Society-Mind knobs from the God console.
+
+        Only scalar caps that are thread-safe to change mid-run are accepted here:
+        `autonomy_ratio` (ceiling on the student's population share) and
+        `active_embodied_citizens` (how many citizens the student may drive per tick).
+        Changing `student_size` needs a net rebuild, so it stays config-only."""
+        m = self.society_mind
+        if m is None:
+            return {"ok": False, "message": "society mind is off"}
+        applied: dict = {}
+        if knobs.get("autonomy_ratio") is not None:
+            v = max(0.0, min(1.0, float(knobs["autonomy_ratio"])))
+            m.autonomy_ratio = v
+            m.curriculum.autonomy_ratio = v
+            self.cfg.mind.autonomy_ratio = v
+            applied["autonomy_ratio"] = v
+        if knobs.get("active_embodied_citizens") is not None:
+            v = max(0, int(knobs["active_embodied_citizens"]))
+            m.active_embodied_citizens = v
+            self.cfg.mind.active_embodied_citizens = v
+            applied["active_embodied_citizens"] = v
+        return {"ok": bool(applied), "applied": applied,
+                "student_size": getattr(m, "student_size", "tiny"),
+                "autonomy_ratio": m.autonomy_ratio,
+                "active_embodied_citizens": m.active_embodied_citizens}
+
+    def rebuild_mind_model(self, *, size: str | None = None, hidden: int | None = None,
+                           layers: int | None = None) -> dict:
+        """Resize the liquid student net live from the dashboard.
+
+        Unlike `tune_mind`'s scalar caps, the net's parameter shapes change, so the
+        student is rebuilt and the previously trained weights are discarded (the corpus
+        survives, so it retrains quickly). The chosen size is also written back onto the
+        live config so a subsequent checkpoint/save reflects it."""
+        m = self.society_mind
+        if m is None:
+            return {"ok": False, "message": "society mind is off"}
+        res = m.rebuild_student(size=size, hidden=hidden, layers=layers)
+        if res.get("ok"):
+            # persist the choice onto the live config (size wins; raw dims override)
+            self.cfg.mind.student_size = res["student_size"]
+            self.cfg.mind.hidden = hidden
+            self.cfg.mind.layers = layers
+            self._mind_train_warned = False    # let a post-rebuild error surface once
+        return res
+
+    def spatial_debug(self) -> dict:
+        counters = dict(getattr(self.population, "spatial_counters", {}))
+        positioned = int(counters.get("positioned", 0))
+        moving = int(counters.get("moving", 0))
+        paths = int(counters.get("paths_requested", 0))
+        path_failed = int(counters.get("path_failed", 0))
+        avg_len = counters.get("path_length_sum", 0) / max(1, paths)
+        actions: dict[str, int] = {}
+        target_kinds: dict[str, int] = {}
+        samples = []
+        for p in self.population.people.values():
+            if not p.alive:
+                continue
+            actions[p.last_action or "idle"] = actions.get(p.last_action or "idle", 0) + 1
+            action = getattr(p, "current_action", {}) or {}
+            tk = action.get("target_kind", "none")
+            target_kinds[tk] = target_kinds.get(tk, 0) + 1
+            if len(samples) < 8 and action:
+                samples.append({"id": p.id, "name": p.name, "action": p.last_action,
+                                "target": tk, "moving": bool(getattr(p, "moving", False)),
+                                "path_len": len(getattr(p, "path", []) or [])})
+        return {
+            "positioned": positioned,
+            "moving": moving,
+            "population_embodiment_pct": round(positioned / max(1, len(self.population.people)) * 100, 1),
+            "action_distribution": dict(sorted(actions.items(), key=lambda kv: -kv[1])[:12]),
+            "target_distribution": dict(sorted(target_kinds.items(), key=lambda kv: -kv[1])[:12]),
+            "avg_path_length": round(float(avg_len), 2),
+            "failed_path_count": path_failed,
+            "paths_requested": paths,
+            "spatial_replay_samples": int(counters.get("spatial_replay_samples", 0)),
+            "movement_events": int(counters.get("movement_events", 0)),
+            "sampled_agents": samples,
+            "feature_count": len(spatial_mod.SPATIAL_FEATURES),
+        }
 
     def serialize_society(self) -> dict:
         """Religions and factions for the dashboard 'follow' browsers."""
@@ -1200,15 +1294,31 @@ class Engine:
         self._llm_history_cursor = self._latest_history_id()
 
     def _repair_loaded_state(self) -> None:
+        if not hasattr(self.population, "spatial_index"):
+            self.population.spatial_index = spatial_mod.SpatialIndex()
+        if not hasattr(self.population, "spatial_counters"):
+            self.population.spatial_counters = {
+                "positioned": 0, "moving": 0, "paths_requested": 0,
+                "path_failed": 0, "path_length_sum": 0, "movement_events": 0,
+                "spatial_replay_samples": 0,
+            }
         for p in self.population.people.values():
             for name, default in (
                 ("mood", 0.0), ("stress", 0.0), ("trust_observer", 0.0),
                 ("reputation", 0.0), ("possessions", {}), ("secrets", []),
                 ("rumors", []), ("ambitions", []), ("active_plans", []),
                 ("home_building", ""), ("work_building", ""),
+                ("current_tile", (0, 0)), ("position", (0.0, 0.0)),
+                ("home_position", (0.0, 0.0)), ("work_position", (0.0, 0.0)),
+                ("destination", None), ("path", []), ("path_index", 0),
+                ("path_progress", 0.0), ("moving", False), ("perception_radius", 8),
+                ("current_action", {}),
             ):
                 if not hasattr(p, name):
                     setattr(p, name, default.copy() if isinstance(default, (dict, list)) else default)
+            city = self.world.cities.get(p.home_city) if p.home_city else None
+            if city and (getattr(p, "position", (0.0, 0.0)) == (0.0, 0.0)):
+                spatial_mod.initialize_person_position(self.world, p, city)
         for c in self.world.cities.values():
             city_mod._ensure_economy_fields(c)
             city_mod._ensure_demographic_fields(c)
@@ -1233,6 +1343,10 @@ class Engine:
         for u in self.world.units.values():
             if not hasattr(u, "cargo"):
                 u.cargo = {}
+        try:
+            self.population._rebuild_spatial()
+        except Exception:  # noqa: BLE001
+            log.exception("failed to rebuild citizen spatial index")
         if not hasattr(self.society, "cultures"):
             self.society.cultures = {}
         if not hasattr(self.world, "historical_sites") or self.world.historical_sites is None:
@@ -1367,7 +1481,7 @@ class Engine:
             min(1.0, city.wealth / 80),
             min(1.0, (city.culture + getattr(city, "stocks", {}).get("knowledge", 0.0) * 0.1) / 120),
             min(1.0, city.infrastructure / 10), min(1.0, pressure),
-        ]
+        ] + [0.0] * len(spatial_mod.SPATIAL_FEATURES)
 
     @staticmethod
     def _clean_slot(slot: str) -> str:
@@ -1723,6 +1837,9 @@ class Engine:
                          "kind": r.kind, "strength": round(r.strength, 2),
                          "note": r.note})
         city = self.world.cities.get(p.home_city) if p.home_city else None
+        spatial_obs = spatial_mod.compact_observation(
+            self.world, self.population, p, city, getattr(self.population, "spatial_index", None)
+        ) if p.alive else {}
         return {
             "id": p.id, "name": p.name, "summary": p.summary(),
             "archive": self.deceased_archive(p) if not p.alive else None,
@@ -1743,6 +1860,10 @@ class Engine:
             "rumors": p.rumors[-8:], "ambitions": p.ambitions[-6:],
             "active_plans": p.active_plans[-8:],
             "home_building": p.home_building, "work_building": p.work_building,
+            "spatial": spatial_obs,
+            "current_action": getattr(p, "current_action", {}),
+            "moving": bool(getattr(p, "moving", False)),
+            "path_length": len(getattr(p, "path", []) or []),
             "personality": p.personality, "goals": p.goals,
             "dominant_goal": p.dominant_goal(),
             "skills": {k: round(v, 2) for k, v in p.skills.items() if v > 0.15},
@@ -1793,6 +1914,7 @@ class Engine:
             if ch:
                 kin.append({"id": cid, "rel": "child", "name": ch.name})
         sched = schedule_mod.schedule(p, self.world) if p.alive else None
+        action = getattr(p, "current_action", {}) or {}
         return {
             "id": p.id, "name": p.name, "alive": p.alive, "age": p.age, "sex": p.sex,
             "profession": p.profession, "social_class": p.social_class,
@@ -1805,6 +1927,11 @@ class Engine:
             "next_activity": sched["next_phrase"] if sched else None,
             "next_hour": sched["next_hour"] if sched else None,
             "destination": sched["destination"] if sched else None,
+            "action_target": action,
+            "position": [round(float(getattr(p, "position", (0.0, 0.0))[1]), 2),
+                         round(float(getattr(p, "position", (0.0, 0.0))[0]), 2)],
+            "moving": bool(getattr(p, "moving", False)),
+            "path_length": len(getattr(p, "path", []) or []),
             "why": sched["why"] if sched else f"died of {p.death_cause or 'age'}",
             "season": season_mod.name(self.world.tick),
             "mood": round(p.mood, 2), "health": round(p.health, 2),

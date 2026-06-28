@@ -61,8 +61,22 @@ mind:
   train_interval: 0.4       # seconds between background student train steps
   batch_size: 256
   warmup_steps: 20
-  hidden: 192               # CfC width — raise to make the 4090 sweat harder
-  layers: 3
+  # Student size: named presets tiny(~0.7M)/small(~3M)/medium(~10M)/large(~15M). Most
+  # citizens run the cheap utility model; only `active_embodied_citizens` run the student
+  # each tick, so a bigger student is affordable. Set hidden/layers to pin raw dims (they
+  # override student_size); leave them null to derive dims from the size.
+  student_size: "tiny"
+  hidden: null
+  layers: null
+  active_embodied_citizens: 240   # max citizens the student drives per tick (tiered)
+  autonomy_ratio: 0.7             # ceiling on the student's population share once trusted
+  # Training pipeline (PyTorch backend): advantage-weighted regression + held-out
+  # validation + drift detection. Validation only engages past `min_for_split` samples.
+  awr_beta: 1.0
+  val_fraction: 0.12
+  val_every: 25
+  balance_actions: false          # class-balanced replay (vs prioritized teacher replay)
+  min_for_split: 256
   confidence_gate: 0.45     # teacher-agreement at which the student drives everyone
   dataset_dir: "saves/society_dataset"
   # Opt-in: warm-start the student from your own external JSONL reasoning traces.

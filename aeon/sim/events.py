@@ -34,18 +34,34 @@ CATALOG = {
 def apply(world: "_w.WorldState", kind: str, source: str = "governor", **kw) -> dict:
     """Trigger an event now. Returns the timeline event describing its onset."""
     if kind not in CATALOG:
-        raise ValueError(f"unknown event {kind!r}")
+        return {
+            "tick": world.tick,
+            "type": "event_rejected",
+            "kind": kind,
+            "title": "Unknown Event (Ignored)",
+            "detail": f"Governor attempted invalid event {kind}, safely ignored."
+        }
+
     title, duration = CATALOG[kind]
     duration = int(kw.get("duration", duration))
+
     handler = _HANDLERS[kind]
     detail = handler(world, **kw)
+
     if duration > 1:
-        world.active_events.append({"kind": kind, "ticks_left": duration,
-                                    "started": world.tick})
-    return {"tick": world.tick, "type": "event", "kind": kind,
-            "title": f"{title} ({source})", "detail": detail}
+        world.active_events.append({
+            "kind": kind,
+            "ticks_left": duration,
+            "started": world.tick
+        })
 
-
+    return {
+        "tick": world.tick,
+        "type": "event",
+        "kind": kind,
+        "title": f"{title} ({source})",
+        "detail": detail
+    }
 def step(world: "_w.WorldState") -> list[dict]:
     """Decay active events; emit a timeline entry when one ends."""
     out: list[dict] = []

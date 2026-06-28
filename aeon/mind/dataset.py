@@ -6,9 +6,10 @@ Every sample is one citizen-moment expressed in the format the spec asks for:
              (+ player_question, when one drove the sample)
     OUTPUT = action + emotion + memory_update + dialogue + future_intent
 
-The 24-dim numeric `features` vector (PopulationManager.features) and any text
-embeddings are stored *on the record* so training is self-contained and never has to
-reach back into a live world. JSONL on disk is the source of truth; a bounded
+The numeric `features` vector (PopulationManager.features: legacy person/city context
+plus spatial observation features) and any text embeddings are stored *on the record*
+so training is self-contained and never has to reach back into a live world. JSONL on
+disk is the source of truth; a bounded
 in-memory ring buffer is what the trainer samples minibatches from (so a training step
 never touches the filesystem). duckdb, if installed, is an optional index only.
 
@@ -20,6 +21,7 @@ Channels keep behavior distillation clean from borrowed reasoning traces:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import threading
@@ -29,7 +31,7 @@ from pathlib import Path
 
 log = logging.getLogger("aeon.mind.dataset")
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 SHARD_MAX_LINES = 50_000          # rotate JSONL shards so no file grows unbounded
 BUFFER_MAX = 120_000              # in-memory records the trainer samples from
 
@@ -137,22 +139,131 @@ class SocietyDataset:
         return n
 
     # ----------------------------------------------------------------- sample
-    def sample_batch(self, n: int, *, channel: str = "behavior", rng=None) -> list[dict]:
-        """Random minibatch from the in-memory buffer (no disk I/O)."""
+    def sample_batch(self, n: int, *, channel: str = "behavior", rng=None,
+                     teacher_ratio: float | None = None,
+                     prioritize_disagreement: bool = False,
+                     split: str | None = None, val_fraction: float = 0.12,
+                     balance_key: str | None = None) -> list[dict]:
+        """Random minibatch from the in-memory buffer (no disk I/O).
+
+        `split` ("train"/"val") draws from a deterministic, disjoint hash partition so
+        validation is measured on data the optimizer never trains on. `balance_key`
+        ("action") equalizes class frequency so a dominant action can't swamp the loss.
+        """
         import random as _random
         pool = [r for r in self.buffer
                 if r.get("meta", {}).get("channel", "behavior") == channel]
+        if split in ("train", "val"):
+            pool = [r for r in pool if _split_of(r, val_fraction) == split]
         if not pool:
             return []
         chooser = (rng or _random)
+        if balance_key:
+            return _balanced_sample(pool, n, chooser, balance_key)
+        if teacher_ratio is not None:
+            teacher_ratio = max(0.0, min(1.0, float(teacher_ratio)))
+            teacher = [r for r in pool if r.get("meta", {}).get("source") in (
+                "teacher", "teacher_correction")]
+            student = [r for r in pool if r not in teacher]
+            nt = min(len(teacher), int(round(n * teacher_ratio)))
+            ns = min(len(student), max(0, n - nt))
+            out = []
+            if teacher:
+                out.extend(_weighted_sample(teacher, nt, chooser, prioritize_disagreement))
+            if student and ns:
+                out.extend(_weighted_sample(student, ns, chooser, prioritize_disagreement))
+            if len(out) < n:
+                rest = [r for r in pool if r not in out]
+                out.extend(_weighted_sample(rest, min(len(rest), n - len(out)),
+                                            chooser, prioritize_disagreement))
+            return out
         if len(pool) <= n:
             return list(pool)
-        return chooser.sample(pool, n)
+        return _weighted_sample(pool, n, chooser, prioritize_disagreement)
 
-    def channel_size(self, channel: str = "behavior") -> int:
-        return sum(1 for r in self.buffer
-                   if r.get("meta", {}).get("channel", "behavior") == channel)
+    def channel_size(self, channel: str = "behavior", *, split: str | None = None,
+                     val_fraction: float = 0.12) -> int:
+        n = 0
+        for r in self.buffer:
+            if r.get("meta", {}).get("channel", "behavior") != channel:
+                continue
+            if split in ("train", "val") and _split_of(r, val_fraction) != split:
+                continue
+            n += 1
+        return n
 
     def stats(self) -> dict:
         return {"total": self.total, "by_channel": dict(self.counts),
                 "buffered": len(self.buffer), "shards": len(self._shards())}
+
+
+def _split_of(rec: dict, val_fraction: float) -> str:
+    """Stable, content-derived train/val assignment, memoized on the in-memory record.
+
+    The same record always lands on the same side (so the optimizer never sees a val
+    sample), but the partition is never written back to the JSONL on disk."""
+    meta = rec.setdefault("meta", {})
+    s = meta.get("_split")
+    if s is None:
+        sig = f"{meta.get('ts','')}|{meta.get('source','')}|" \
+              f"{rec.get('output', {}).get('action','')}|{meta.get('city_id','')}"
+        h = int(hashlib.md5(sig.encode()).hexdigest()[:8], 16)
+        s = "val" if (h % 10_000) < int(max(0.0, min(1.0, val_fraction)) * 10_000) else "train"
+        meta["_split"] = s
+    return s
+
+
+def _balanced_sample(pool: list[dict], n: int, chooser, key: str) -> list[dict]:
+    """Class-balanced minibatch: draw roughly evenly across the values of `output[key]`
+    so a dominant action can't dominate the gradient (replay-buffer balancing)."""
+    if n <= 0 or not pool:
+        return []
+    buckets: dict[str, list[dict]] = {}
+    for r in pool:
+        cls = str(r.get("output", {}).get(key, "?"))
+        buckets.setdefault(cls, []).append(r)
+    classes = list(buckets)
+    out: list[dict] = []
+    # round-robin across classes (with replacement), drawing one random record per
+    # class per pass until we have n — equalizes each class's expected representation.
+    i = 0
+    while len(out) < n:
+        bucket = buckets[classes[i % len(classes)]]
+        out.append(bucket[chooser.randrange(len(bucket))])
+        i += 1
+    return out
+
+
+def _weighted_sample(pool: list[dict], n: int, chooser, prioritize: bool) -> list[dict]:
+    if n <= 0 or not pool:
+        return []
+    if len(pool) <= n:
+        return list(pool)
+    if not prioritize:
+        return chooser.sample(pool, n)
+    weights = []
+    for r in pool:
+        meta = r.get("meta", {})
+        w = 1.0
+        if meta.get("source") == "teacher_correction":
+            w += 3.0
+        if meta.get("disagreement"):
+            w += 2.0
+        w += float(meta.get("priority", 0.0) or 0.0)
+        weights.append(w)
+    # `random.Random` has choices on supported Python versions; fall back if needed.
+    if hasattr(chooser, "choices"):
+        out = []
+        seen = set()
+        for rec in chooser.choices(pool, weights=weights, k=min(n * 3, len(pool) * 2)):
+            key = id(rec)
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(rec)
+            if len(out) >= n:
+                return out
+        if len(out) < n:
+            out.extend([r for r in pool if id(r) not in seen][:n - len(out)])
+        return out
+    return chooser.sample(pool, n)

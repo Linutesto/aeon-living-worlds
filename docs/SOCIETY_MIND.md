@@ -43,8 +43,8 @@ training (backprop in a worker thread) coexist with no conflict.
 
 ```
 INPUT  = { world_state, citizen_profile, recent_events, relationship_graph, player_question? }
-OUTPUT = { action, emotion, memory_update, dialogue, future_intent }
-meta   = { channel, source, model, features[24], memory_emb, dialogue_emb, ... }
+OUTPUT = { action, target_kind, target_position, emotion, memory_update, dialogue, future_intent }
+meta   = { channel, source, model, features[legacy+spatial], memory_emb, dialogue_emb, ... }
 ```
 
 ## LLM scheduling — the priority arbiter (`governor/arbiter.py`)
@@ -91,10 +91,11 @@ or torch-absent → the world runs exactly as before.
 ## Dashboard
 
 The Spirit tab's **Society Mind (Level 3)** card: live loss sparkline, teacher agreement
-(with the gate marker), GPU "sweat" (MB), train steps / samples, the corpus counts, the
-27B teacher's cohort activity, and the **population takeover bar**
-(student/teacher/utility). Each citizen dossier's Inner Life shows *who is driving them*
-and their current felt emotion, intent, and last spoken line.
+(with the gate marker), target/action/emotion/intent accuracy, teacher sampling ratio,
+GPU "sweat" (MB), corpus counts, spatial replay/pathfinding counters, the 27B teacher's
+cohort activity, and the **population takeover bar** (student/teacher/utility). Each
+citizen dossier's Inner Life and Spatial Brain show *who is driving them*, where their
+current intent is taking them, and their local perception summary.
 
 ## Verified
 

@@ -18,6 +18,29 @@ from . import placement as _placement
 
 CHUNK_TILES = 32
 
+# The collision-free layout pass is pure (city-local), but slope-limiting needs the world
+# heightmap. We stash the active world here at render time so `_layout_offset` can build a
+# cheap slope sampler without threading `world` through every building-record call.
+_RENDER_WORLD = None
+
+
+def set_render_world(world) -> None:
+    global _RENDER_WORLD
+    _RENDER_WORLD = world
+
+
+def _city_slope_fn(city):
+    """slope_fn(city, local_x, local_y) sampling the live world elevation, or None."""
+    w = _RENDER_WORLD
+    if w is None or getattr(city, "slope_limit", True) is False:
+        return None
+
+    def fn(c, lx, ly):
+        y = max(0, min(w.height - 1, int(round(c.pos[0] + ly))))
+        x = max(0, min(w.width - 1, int(round(c.pos[1] + lx))))
+        return _slope_at(w, y, x)
+    return fn
+
 
 def _global_heightmap(w, res: int = 129) -> dict[str, Any]:
     """ONE authoritative, globally-smoothed elevation field sampled by every renderer
@@ -34,6 +57,7 @@ def _global_heightmap(w, res: int = 129) -> dict[str, Any]:
 
 def manifest_payload(engine) -> dict[str, Any]:
     w = engine.world
+    set_render_world(w)
     return {
         "type": "omega_manifest",
         "tick": w.tick,
@@ -52,14 +76,19 @@ def manifest_payload(engine) -> dict[str, Any]:
         "overlays": [
             "political", "economy", "population", "religion", "faction", "migration",
             "war", "climate", "resources", "policy_confidence",
-            "rebellion_probability",
+            "rebellion_probability", "land_mask", "water_mask", "height",
+            "temperature", "humidity", "fertility", "buildable_score",
+            "city_influence", "road_graph", "district_map", "building_collisions",
+            "spawn_rejections",
         ],
+        "worldgen": getattr(w, "generation_report", {}),
         "policy": engine.world.species_brain.status(),
     }
 
 
 def chunk_payload(engine, cx: int, cy: int, lod: int = 1) -> dict[str, Any]:
     w = engine.world
+    set_render_world(w)
     lod = max(1, min(5, int(lod)))
     x0 = max(0, int(cx) * CHUNK_TILES)
     y0 = max(0, int(cy) * CHUNK_TILES)
@@ -98,6 +127,7 @@ def chunk_payload(engine, cx: int, cy: int, lod: int = 1) -> dict[str, Any]:
 
 
 def entity_payload(engine, entity_id: str) -> dict[str, Any] | None:
+    set_render_world(engine.world)
     if entity_id.startswith("person:"):
         try:
             pid = int(entity_id.split(":", 1)[1])
@@ -397,6 +427,20 @@ def _terrain_features(engine, bounds, lod: int) -> dict[str, list[dict[str, Any]
 
 
 def _roads(w, bounds) -> list[list[float]]:
+    if getattr(w, "road_graph", None):
+        out: list[list[float]] = []
+        for road in w.road_graph:
+            pts = road.get("points", [])
+            for a, b in zip(pts, pts[1:]):
+                if _line_intersects(bounds, a, b):
+                    out.append([a[1] / w.width, a[0] / w.height,
+                                b[1] / w.width, b[0] / w.height,
+                                road.get("civ_id") or 0,
+                                float(road.get("importance", 0.25)),
+                                road.get("kind", "local")])
+                    if len(out) >= 720:
+                        return out
+        return out
     cities = [c for c in w.cities.values() if c.alive]
     out: list[list[float]] = []
     seen = set()
@@ -557,19 +601,24 @@ def _buildings(engine, bounds, lod: int) -> list[dict[str, Any]]:
     return out
 
 
-def _layout_offset(city, b) -> tuple[float, float, bool]:
+def _layout_offset(city, b) -> tuple[float, float, bool, float]:
     """City-local (x,y) offset for a building from the collision-free layout pass.
-    Falls back to the legacy spiral offset for ids not in the layout. Third value is
-    the overlap-debug flag (True only when the city was too crowded to place it)."""
-    layout = _placement.layout_city(city, _building_footprint, _district_offset)
+    Falls back to the legacy spiral offset for ids not in the layout. Returns
+    (x, y, overlap_debug, reserved_radius). `reserved_radius` is the radius the layout
+    actually packed around — for crowded slots the layout SHRINKS this below the nominal
+    footprint, so the renderer must draw within it (not the full footprint) to stay
+    collision-free."""
+    layout = _placement.layout_city(city, _building_footprint, _district_offset,
+                                    slope_fn=_city_slope_fn(city))
     slot = layout.get(b.id)
     if slot is not None:
-        return slot["x"], slot["y"], bool(slot.get("skip"))
-    return (*_building_offset(city.id, b.id, b.district, city.influence_radius), False)
+        return slot["x"], slot["y"], bool(slot.get("skip")), float(slot.get("r", 0.0))
+    ox, oy = _building_offset(city.id, b.id, b.district, city.influence_radius)
+    return ox, oy, False, _building_footprint(b.kind, b.district, b.wealth)
 
 
 def _building_record(engine, city, b, high_detail: bool = False) -> dict[str, Any]:
-    ox, oy, overlap = _layout_offset(city, b)
+    ox, oy, overlap, reserved_r = _layout_offset(city, b)
     residents = _building_residents(engine, b.id)
     owner = engine.population.get(b.owner_id) if b.owner_id else None
     pressure = _policy_pressure_for_city(engine, city)
@@ -594,7 +643,14 @@ def _building_record(engine, city, b, high_detail: bool = False) -> dict[str, An
             "banner": b.kind in ("temples", "barracks", "market", "noble_district"),
             "chimney": b.kind in ("workshops", "archives") and city.infrastructure > 4,
             "rubble": b.abandoned or b.condition < 0.28,
-            "footprint": round(_building_footprint(b.kind, b.district, b.wealth), 3),
+            # the radius the layout RESERVED for this slot (shrunk below the nominal
+            # footprint for crowded placements), so the renderer draws within its own
+            # collision cell and two slots never render as overlapping volumes.
+            "footprint": round(reserved_r or _building_footprint(b.kind, b.district, b.wealth), 3),
+            # min-spacing factor the collision-free layout used for this city, so the
+            # renderer can size each building to its reserved footprint (see
+            # RendererApp.buildingScale).
+            "spacing": round(float(getattr(city, "building_spacing", _placement.SPACING)), 3),
             "landmark": is_landmark,
             "landmark_reason": landmark["reason"] if is_landmark else "",
             "skyline_score": round(_city_skyline_score(city), 3),
@@ -817,6 +873,9 @@ def _citizens(engine, bounds, lod: int) -> dict[str, Any]:
                 "work_building": p.work_building,
                 "path": _citizen_path(engine, city, p),
                 "routine": p.last_action or "idle",
+                "action_target": getattr(p, "current_action", {}),
+                "moving": bool(getattr(p, "moving", False)),
+                "target_kind": (getattr(p, "current_action", {}) or {}).get("target_kind"),
                 "group": _citizen_group(p),
                 "goal": p.dominant_goal(),
                 "home": _entity_xy(engine, p.home_building),
@@ -886,6 +945,18 @@ def _overlays(engine, bounds) -> dict[str, list[dict[str, Any]]]:
         pressure = _policy_pressure_for_city(engine, city)
         shortages = getattr(city, "shortages", {})
         civ = engine.world.civilizations.get(city.civ_id)
+        y, x = city.pos
+        w = engine.world
+        buildable = getattr(w, "buildable_score", None)
+        road_access = getattr(w, "road_access", None)
+        # real congestion/rejection from the collision-free layout pass (footprints that
+        # couldn't be placed without overlapping → drawn as collision-debug markers).
+        lstats = _placement.layout_stats(city)
+        layout_rejected = int(lstats.get("rejected", 0))
+        layout_congestion = float(lstats.get("congestion", 0.0))
+        slope_rejected = int(lstats.get("slope_rejected", 0))
+        collisions = sum(1 for b in getattr(city, "building_entities", {}).values()
+                         if getattr(b, "abandoned", False)) + layout_rejected
         values.append({"city_id": city.id, "x": city.pos[1] / engine.world.width,
                        "y": city.pos[0] / engine.world.height,
                        # political map: a city tinted by the nation that holds it
@@ -902,6 +973,21 @@ def _overlays(engine, bounds) -> dict[str, list[dict[str, Any]]]:
                        "policy_confidence": engine.world.species_brain.status().get("confidence", 0.0),
                        "resources": round(max(0.0, min(1.0, 1.0 - getattr(city, "demand_pressure", 0.0)
                                                       + getattr(city, "trade_dependency", 0.0) * 0.18)), 3),
+                       "land_mask": 1.0,
+                       "water_mask": 0.0,
+                       "height": round(float((w.elevation[y, x] + 1.0) / 2.0), 3),
+                       "temperature": round(float(max(0.0, min(1.0, (w.temperature[y, x] + 20.0) / 60.0))), 3),
+                       "humidity": round(float(max(0.0, min(1.0, w.humidity[y, x]))), 3),
+                       "fertility": round(float(max(0.0, min(1.0, w.food[y, x]))), 3),
+                       "buildable_score": round(float(buildable[y, x]) if buildable is not None else 0.0, 3),
+                       "city_influence": round(min(1.0, city.influence_radius / 22.0), 3),
+                       "road_graph": round(float(road_access[y, x]) if road_access is not None else 0.0, 3),
+                       "district_map": round(float(min(1.0, len(getattr(city, "building_entities", {})) / 240.0)), 3),
+                       "building_collisions": round(float(min(1.0, collisions / 16.0)), 3),
+                       "building_congestion": round(layout_congestion, 3),
+                       "layout_rejected": layout_rejected,
+                       "slope_rejected": slope_rejected,
+                       "spawn_rejections": round(float(min(1.0, (len(getattr(w, "generation_report", {}).get("rejected", [])) + layout_rejected) / 10.0)), 3),
                        "food_shortage": round(shortages.get("food", 0.0), 3),
                        "metal_shortage": round(shortages.get("metal", 0.0), 3),
                        "labor_shortage": round(shortages.get("labor", 0.0), 3),
@@ -1155,7 +1241,7 @@ def _city_landmark(engine, city) -> dict[str, Any] | None:
     if not candidates:
         return None
     b = max(candidates, key=lambda x: (x.wealth, x.condition, -x.age))
-    ox, oy, _ = _layout_offset(city, b)
+    ox, oy, _, _ = _layout_offset(city, b)
     return {
         "building_id": b.id,
         "reason": reason,
@@ -1221,6 +1307,11 @@ def _entity_xy(engine, building_id: str) -> list[float] | None:
 
 
 def _citizen_path(engine, city, p) -> list[list[float]]:
+    path = getattr(p, "path", None) or []
+    if path:
+        return [[round(float(x) / engine.world.width, 5),
+                 round(float(y) / engine.world.height, 5)]
+                for y, x in path[:48]]
     home = _entity_xy(engine, p.home_building)
     work = _entity_xy(engine, p.work_building)
     cur = _citizen_position(engine, city, p)
@@ -1343,6 +1434,9 @@ def _building_footprint(kind: str, district: str = "", wealth: float = 0.0) -> f
 
 
 def _citizen_position(engine, city, p) -> tuple[float, float]:
+    pos = getattr(p, "position", None)
+    if pos:
+        return float(pos[1]) / engine.world.width, float(pos[0]) / engine.world.height
     target = p.work_building if p.last_action in ("work", "study", "worship") else p.home_building
     ent = entity_payload(engine, f"building:{target}")
     if ent and ent.get("data"):

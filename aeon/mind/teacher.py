@@ -20,7 +20,8 @@ import re
 from .cohort import CohortBatcher, Cohort, world_state
 from .dataset import Sample, SocietyDataset
 from .encode import (ACTIONS, EMOTIONS, INTENTS, get_embedder,
-                     action_index, emotion_index, intent_index)
+                     TARGET_KINDS, action_index, emotion_index, intent_index)
+from ..agents import spatial
 
 log = logging.getLogger("aeon.mind.teacher")
 
@@ -102,6 +103,12 @@ class TeacherInference:
             emotion = _clip(dec.get("emotion"), EMOTIONS, "content")
             intent = _clip(dec.get("future_intent") or dec.get("intent"),
                            INTENTS, "endure")
+            target = spatial.choose_target(world, None, p, action, city)
+            target_kind = _clip(dec.get("target_kind") or target.get("target_kind"),
+                                TARGET_KINDS, target.get("target_kind", "city_center"))
+            target["target_kind"] = target_kind
+            if dec.get("target_reason"):
+                target["reason"] = str(dec.get("target_reason"))[:160]
             memory = str(dec.get("memory", "") or "")[:240]
             dialogue = str(dec.get("dialogue", "") or "")[:240]
 
@@ -111,6 +118,7 @@ class TeacherInference:
             p.intent = intent
             p.last_dialogue = dialogue
             p.mind_source = "teacher"
+            p.current_action = target
             nudge = _EMOTION_MOOD.get(emotion, 0.0)
             p.mood = max(-1.0, min(1.0, 0.7 * p.mood + 0.3 * nudge))
             if memory:
@@ -126,6 +134,9 @@ class TeacherInference:
                     "player_question": None,
                 },
                 output={"action": action, "emotion": emotion,
+                        "target_kind": target_kind,
+                        "target_id": target.get("target_id"),
+                        "target_position": target.get("target_position"),
                         "memory_update": memory, "dialogue": dialogue,
                         "future_intent": intent},
                 meta={

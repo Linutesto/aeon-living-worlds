@@ -50,11 +50,14 @@ is full the faintest are forgotten first. So a life is remembered by its peaks.
 ## Cognition (`agents/traits.py`)
 
 Level-1 cognition is a **utility model**, not a neural net. `action_utilities(person,
-city, world)` scores actions (`work, socialize, court, feud, migrate, study, worship,
-rest, venture`) from personality, needs, and circumstance; `choose_action(...)` samples
-one — optionally **biased by the species policy** (L2). Actions in `population._live_one`
-produce wealth/skill changes, marriages, births, feuds, migrations, and deaths — each
-emitting memories, relationship shifts, and timeline events. These are the emergent
+city, world)` scores embodied intents (`work, feed, socialize, court, feud, migrate,
+study, worship, rest, venture, trade, join_army, flee, seek_shelter,
+visit_city_center`) from personality, needs, local danger, and circumstance;
+`choose_action(...)` samples one — optionally **biased by the species policy** (L2).
+`agents/spatial.py` then turns that intent into a target entity/position and bounded
+terrain-aware path. Actions in `population._live_one` produce wealth/skill changes,
+marriages, births, feuds, migrations, and deaths — each emitting memories, relationship
+shifts, spatial replay snippets, and timeline events. These are the emergent
 micro-stories.
 
 ## The interview system (`agents/interview.py`)
@@ -70,15 +73,18 @@ Endpoint: `POST /api/person/{id}/ask {question}` → `{answer}` (see [API.md](AP
 
 ## L2 — Per-species learning (`ai/species_policy.py`)
 
-Each species gets its own policy mapping a 12-feature state vector (personality + age +
-health + wealth + status + famine + partnered + children) to a preference over the L1
-action set. Individuals sample actions biased by their species' policy, so as it learns,
-the **species** develops characteristic tendencies — none of it scripted.
+Each species gets its own policy mapping a compact feature vector (legacy person/city
+state plus spatial context such as distance to home/work/food/enemy, terrain risk,
+crowd density, road access, local economy/health/war/famine pressure, temperature
+stress, migration opportunity, and safety) to a preference over the L1 action set.
+Individuals sample actions biased by their species' policy, so as it learns, the
+**species** develops characteristic tendencies — none of it scripted.
 
-- **Learning:** REINFORCE. The pool buffers `(features, action, reward)` where reward is
-  how well the individual thrives (health/wealth/status/offspring). `_mind_loop` in the
-  engine periodically calls `SpeciesBrain.learn(experience)` to nudge each species'
-  policy toward its high-reward actions.
+- **Learning:** Advantage-Weighted Regression. The pool buffers `(features, action,
+  target, reward, spatial)` where reward is how well the individual thrives
+  (health/wealth/status/offspring). `_mind_loop` in the engine periodically calls
+  `SpeciesBrain.learn(experience)` to nudge each species' policy toward its high-reward
+  actions without off-policy collapse.
 - **Backends:** `_TorchPolicy` (a small MLP on **CUDA** when available) or an equivalent
   `_NumpyPolicy` behind the **same interface** — the sim never hard-depends on torch.
   `SpeciesBrain.status()` reports `torch:cuda`, `torch:cpu`, or `numpy`.

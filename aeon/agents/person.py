@@ -95,6 +95,20 @@ class Person:
     last_action: str = ""
     born_real: bool = False    # materialized vs implied (for LOD bookkeeping)
 
+    # spatial embodiment for the materialized LOD population. Coordinates are world
+    # tile-space (y, x); render payloads normalize them later.
+    current_tile: tuple[int, int] = (0, 0)
+    position: tuple[float, float] = (0.0, 0.0)
+    home_position: tuple[float, float] = (0.0, 0.0)
+    work_position: tuple[float, float] = (0.0, 0.0)
+    destination: tuple[float, float] | None = None
+    path: list[tuple[float, float]] = field(default_factory=list)
+    path_index: int = 0
+    path_progress: float = 0.0
+    moving: bool = False
+    perception_radius: int = 8
+    current_action: dict = field(default_factory=dict)
+
     # inner life written by the Society Intelligence Stack (aeon/mind/)
     emotion: str = ""          # teacher/student read of current feeling
     intent: str = ""           # future_intent the mind assigns

@@ -64,6 +64,11 @@ CODEX_HANDOFF.md
 # ---- Vendored separate project (own repo; not part of AEON) ----
 freeaitokens/
 
+# ---- Personal embed-capture tooling (writes into the yandesbiens.com repo and
+#      references other local projects). Kept local — not part of public AEON. ----
+capture_for_web.py
+config.capture.yaml
+
 # ---- OS / editor cruft ----
 .DS_Store
 Thumbs.db

@@ -150,6 +150,8 @@ class CohortBatcher:
             '{"citizens":[{"id":<int>,"action":<one of '
             f"{ACTIONS}>,\"emotion\":<one of {EMOTIONS}>,"
             '"future_intent":<one of ' f"{INTENTS}>,"
+            '"target_kind":"home|workplace|city|citizen|market|temple|resource|shelter",'
+            '"target_reason":"<why this destination fits>",'
             '"memory":"<one vivid first-person sentence they would now hold>",'
             '"dialogue":"<one short line they might say aloud>"}]}\n'
             "Every id from the cohort must appear exactly once. No prose outside the JSON."

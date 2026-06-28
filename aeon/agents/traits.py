@@ -85,8 +85,9 @@ def goal_weights(personality: dict[str, float], rng) -> dict[str, float]:
 
 # ---- Level-1 decision: pick an action by utility ----
 # actions an individual can take on a life-tick
-ACTIONS = ["work", "socialize", "court", "feud", "migrate", "study",
-           "worship", "rest", "venture"]
+ACTIONS = ["work", "feed", "socialize", "court", "feud", "migrate", "study",
+           "worship", "rest", "venture", "trade", "join_army", "flee",
+           "seek_shelter", "visit_city_center"]
 
 
 def action_utilities(person, city, world) -> dict[str, float]:
@@ -96,11 +97,16 @@ def action_utilities(person, city, world) -> dict[str, float]:
     g = person.goals
     needy = 1.0 - person.health
     famine = 1.0 if (city and city.famine > 0) else 0.0
+    war = 1.0 if (city and any(getattr(u, "kind", "") == "army"
+                               and getattr(u, "dest_city", None) == city.id
+                               for u in world.units.values())) else 0.0
+    plague = 1.0 if (city and city.plague > 0) else 0.0
     lonely = 1.0 if not person.relationships else 0.0
     single = 1.0 if person.partner_id is None and 16 <= person.age <= 55 else 0.0
 
     u = {
         "work":      0.5 * g.get("wealth", .3) + 0.4 * p["conscientiousness"] + 0.3 * famine,
+        "feed":      0.45 * famine + 0.25 * needy + 0.2 * g.get("survive", .4),
         "socialize": 0.5 * p["extraversion"] + 0.4 * g.get("status", .3) + 0.3 * lonely,
         "court":     0.7 * single * g.get("family", .3) + 0.3 * p["extraversion"],
         "feud":      0.5 * (1 - p["agreeableness"]) * g.get("power", .2) + 0.2 * p["neuroticism"],
@@ -109,6 +115,11 @@ def action_utilities(person, city, world) -> dict[str, float]:
         "worship":   0.6 * g.get("faith", .2) + 0.3 * p["neuroticism"],
         "rest":      0.3 + 0.6 * needy,
         "venture":   0.6 * g.get("exploration", .2) * p["openness"] + 0.2 * (1 - person.rootedness),
+        "trade":     0.55 * g.get("wealth", .3) + 0.4 * person.skills.get("trade", 0.0),
+        "join_army": 0.35 * person.skills.get("combat", 0.0) + 0.35 * g.get("power", .2) + 0.3 * war,
+        "flee":      0.7 * war + 0.45 * plague + 0.35 * famine + 0.2 * p["neuroticism"],
+        "seek_shelter": 0.55 * war + 0.45 * plague + 0.3 * needy,
+        "visit_city_center": 0.25 + 0.25 * p["extraversion"] + 0.2 * g.get("status", .3),
     }
     return {a: max(0.0, v) for a, v in u.items()}
 

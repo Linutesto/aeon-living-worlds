@@ -139,20 +139,26 @@ function renderMind(sm) {
   }
   const ds = sm.dataset || {}, byCh = ds.by_channel || {};
   const tea = sm.teacher || {}, mix = sm.population_mix || {};
+  const sp = sm.spatial || {};
   const curve = sm.loss_curve || [];
   const gate = sm.confidence_gate || 0.45;
   const agreePct = Math.round((sm.agreement || 0) * 100);
   const sharePct = Math.round((sm.student_share || 0) * 100);
+  const teacherPct = Math.round((sm.teacher_sampling_ratio ?? 1) * 100);
+  const cur = sm.curriculum || {};
+  const ck = sm.checkpoint || {};
   const rows = [
     ["Backend", sm.backend || "—"],
-    ["Student params", fmt(sm.params)],
+    ["Student size", `${esc(sm.student_size || "tiny")} · ${sm.hidden ?? "?"}×${sm.layers ?? "?"} · ${fmt(sm.params)} params`],
     ["GPU sweat", sm.gpu_mb ? `${sm.gpu_mb} MB` : "—"],
+    ["Active embodied", `${fmt(sm.active_embodied_citizens)} max · ${fmt((mix.student||0))} now`],
     ["Train steps", fmt(sm.steps)],
     ["Samples trained", fmt(sm.samples_trained)],
     ["Loss (EMA)", sm.ema_loss ?? "—"],
     ["Action acc", pct(sm.action_acc)],
     ["Emotion acc", pct(sm.emotion_acc)],
     ["Intent acc", pct(sm.intent_acc)],
+    ["Target acc", pct(sm.target_acc)],
   ];
   el.innerHTML = `
     ${sparkline(curve)}
@@ -160,8 +166,35 @@ function renderMind(sm) {
       <span class="v" style="color:var(--accent-2)">${agreePct}%</span></div>
     ${meter(agreePct, gate * 100)}
     ${rows.map(([k, v]) => `<div class="row"><span class="k">${k}</span><span class="v">${v}</span></div>`).join("")}
+    <h4 style="margin-top:10px">Teacher-Priority Curriculum</h4>
+    <div class="row"><span class="k">Phase</span><span class="v">${esc(sm.curriculum_phase || "phase_1_teacher_first")} (${(cur.phase_index ?? 0) + 1}/${cur.phase_count || 4})</span></div>
+    <div class="row"><span class="k">Teacher sampling</span><span class="v">${teacherPct}%</span></div>
+    <div class="row"><span class="k">Student autonomy</span><span class="v">${sharePct}% / ceiling ${pct(sm.autonomy_ratio)}</span></div>
+    <div class="row"><span class="k">Rollbacks</span><span class="v">${fmt(sm.rollbacks)}</span></div>
+    <div class="row"><span class="k">Blocked by</span><span class="v">${(cur.blocked_by || []).map(esc).join(", ") || "—"}</span></div>
+    <div class="row"><span class="k">Drift score</span><span class="v">${sm.regression_drift_score ?? "—"}</span></div>
+    <div class="row"><span class="k">Capability score</span><span class="v">${pct(sm.capability_score)}</span></div>
+    ${sm.validations ? `<h4 style="margin-top:10px">Held-out Validation</h4>
+    <div class="row"><span class="k">Val capability</span><span class="v">${pct(sm.val_capability)} (best ${pct(sm.best_val_capability)})</span></div>
+    <div class="row"><span class="k">Val action acc</span><span class="v">${pct(sm.val_action_acc)}</span></div>
+    <div class="row"><span class="k">Val drift</span><span class="v">${sm.val_drift ?? "—"}</span></div>
+    <div class="row"><span class="k">Validations</span><span class="v">${fmt(sm.validations)}</span></div>` : ""}
+    <div class="row"><span class="k">Checkpoint</span><span class="v">${ck.exists ? "● saved" : "—"} · v${fmt(sm.version)} · ${esc(ck.slot || "society_mind")}</span></div>
     <h4 style="margin-top:10px">Population takeover — student drives ${sharePct}%</h4>
     ${takeoverBar(mix)}
+    <h4 style="margin-top:10px">Spatial Brain</h4>
+    <div class="row"><span class="k">Embodied citizens</span><span class="v">${fmt(sp.positioned)} · ${sp.population_embodiment_pct ?? 0}%</span></div>
+    <div class="row"><span class="k">Moving now</span><span class="v">${fmt(sp.moving)}</span></div>
+    <div class="row"><span class="k">Action targets</span><span class="v">${dist(sp.target_distribution)}</span></div>
+    <div class="row"><span class="k">Actions</span><span class="v">${dist(sp.action_distribution)}</span></div>
+    <h4 style="margin-top:10px">Citizen Movement</h4>
+    <div class="row"><span class="k">Pathfinding</span><span class="v">${fmt(sp.paths_requested)} paths · ${fmt(sp.failed_path_count)} failed</span></div>
+    <div class="row"><span class="k">Average path length</span><span class="v">${sp.avg_path_length ?? 0}</span></div>
+    <div class="row"><span class="k">Movement events</span><span class="v">${fmt(sp.movement_events)}</span></div>
+    <h4 style="margin-top:10px">Local Perception / Model Inputs</h4>
+    <div class="row"><span class="k">Spatial features</span><span class="v">${fmt(sp.feature_count)}</span></div>
+    <div class="row"><span class="k">Spatial replay samples</span><span class="v">${fmt(sp.spatial_replay_samples)}</span></div>
+    <div class="reason">Disagreement hot spots: ${hotspots(sm.disagreement_hotspots)}</div>
     <h4 style="margin-top:10px">Corpus (training format)</h4>
     <div class="row"><span class="k">Total samples</span><span class="v">${fmt(ds.total)}</span></div>
     <div class="row"><span class="k">Behavior</span><span class="v">${fmt(byCh.behavior)}</span></div>
@@ -172,6 +205,20 @@ function renderMind(sm) {
     <div class="row"><span class="k">Citizens taught</span><span class="v">${fmt(tea.citizens_taught)}</span></div>
     <div class="reason">Last cohort: ${esc(tea.last_reason || "—")}</div>
     ${arbiterRows(sm.arbiter || {})}`;
+}
+
+function dist(obj) {
+  const rows = Object.entries(obj || {}).slice(0, 4)
+    .map(([k, v]) => `${esc(k)} ${fmt(v)}`);
+  return rows.length ? rows.join(" · ") : "—";
+}
+
+function hotspots(obj) {
+  if (!obj) return "—";
+  return Object.entries(obj).map(([head, vals]) => {
+    const top = Object.entries(vals || {})[0];
+    return top ? `${head}:${esc(top[0])}` : "";
+  }).filter(Boolean).join(" · ") || "—";
 }
 
 // The priority LLM scheduler: how the single GPU's scarce calls are shared. Shows the

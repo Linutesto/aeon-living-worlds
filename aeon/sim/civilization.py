@@ -220,7 +220,8 @@ def step(world: "_w.WorldState") -> list[dict]:
 def _maybe_emerge(world) -> list[dict]:
     out: list[dict] = []
     n_live = sum(1 for c in world.cities.values() if c.alive)
-    if n_live >= _cities.CITY_CAP:
+    cap = int(_cities.CITY_CAP * max(0.5, min(2.0, world.params.city_density)))
+    if n_live >= cap:
         return out
     if not world.rng.chance("civ_emerge", 0.03 * world.params.civ_expansion_drive):
         return out
@@ -288,7 +289,8 @@ def seed_initial(world: "_w.WorldState", n: int = 5) -> list[dict]:
     scored = sorted(((float(_cities.site_suitability(world, int(y), int(x))), int(y), int(x))
                      for y, x in sample), key=lambda t: -t[0])
     capitals: list[tuple[int, int]] = []
-    min_spacing = max(_cities.MIN_CITY_SPACING + 6,
+    cfg_spacing = int(max(_cities.MIN_CITY_SPACING, world.params.min_city_distance))
+    min_spacing = max(cfg_spacing + 6,
                       (world.width + world.height) // (2 * max(2, n)))
     for s, y, x in scored:
         if s < 0.4:
@@ -303,7 +305,7 @@ def seed_initial(world: "_w.WorldState", n: int = 5) -> list[dict]:
         for s, y, x in scored:
             if (y, x) in capitals or s < 0.3:
                 continue
-            if any(abs(cy - y) + abs(cx - x) < _cities.MIN_CITY_SPACING
+            if any(abs(cy - y) + abs(cx - x) < cfg_spacing
                    for cy, cx in capitals):
                 continue
             capitals.append((y, x))

@@ -2,9 +2,9 @@
 
 The student is a continuous-time recurrent net, so each citizen-moment is encoded as a
 short **sequence of recent events** (with real time-deltas, dt) flowing into a static
-context (the 24-dim feature vector + world pressure + a relationship-graph summary).
-The five OUTPUT heads are: action (class), emotion (class), future_intent (class), and
-two embedding-regression heads for the free-text memory_update and dialogue.
+context (legacy person/city features + spatial observation features + world pressure +
+a relationship-graph summary). The OUTPUT heads are: action, emotion, future_intent,
+target kind, and two embedding-regression heads for free-text memory_update/dialogue.
 
 numpy is used for per-record arrays (always available); torch is imported lazily inside
 `encode_batch` so this module is safe to import even where the ML stack isn't loaded.
@@ -17,6 +17,7 @@ import math
 
 import numpy as np
 
+from ..agents.spatial import SPATIAL_FEATURES, TARGET_KIND_BY_ACTION
 from ..agents.traits import ACTIONS  # 9 life actions — the action head's classes
 
 # Inner-life vocabularies the teacher emits and the student learns to predict.
@@ -24,6 +25,10 @@ EMOTIONS = ["content", "joyful", "hopeful", "proud", "anxious",
             "fearful", "angry", "resentful", "grieving", "numb"]
 INTENTS = ["endure", "prosper", "provide", "rise", "seek_knowledge",
            "seize_power", "wander", "devote", "rebel", "flee"]
+TARGET_KINDS = sorted(set(TARGET_KIND_BY_ACTION.values()) | {
+    "home", "workplace", "city", "city_center", "citizen", "food", "resource",
+    "shelter", "market", "temple", "school", "fort",
+})
 
 # Coarse event kinds for the recurrent input (one-hot + valence per step).
 EV_KINDS = ["work", "social", "family", "conflict", "migration",
@@ -35,7 +40,8 @@ _EV_ALIAS = {
     "worship": "faith", "preach": "faith", "rebel": "conflict", "migrate": "migration",
 }
 
-N_FEAT = 24                       # PopulationManager.features width
+LEGACY_N_FEAT = 24
+N_FEAT = LEGACY_N_FEAT + len(SPATIAL_FEATURES)
 N_CTX = 8                         # world_state scalars
 N_REL = 6                         # relationship-graph summary
 N_EV = len(EV_KINDS) + 1          # event one-hot + valence
@@ -45,6 +51,7 @@ IN_DIM = STATIC_DIM + N_EV        # per-timestep input width
 EMBED_DIM = 64                    # text-embedding head/target width
 
 N_ACTION, N_EMOTION, N_INTENT = len(ACTIONS), len(EMOTIONS), len(INTENTS)
+N_TARGET = len(TARGET_KINDS)
 
 
 # --------------------------------------------------------------- text embedding
@@ -89,6 +96,8 @@ def _idx(vocab: list[str], value, default: int = 0) -> int:
 
 
 def action_index(a) -> int:
+    if isinstance(a, dict):
+        a = a.get("type")
     return _idx(ACTIONS, a, _idx(ACTIONS, "rest"))
 
 
@@ -98,6 +107,12 @@ def emotion_index(e) -> int:
 
 def intent_index(i) -> int:
     return _idx(INTENTS, i, _idx(INTENTS, "endure"))
+
+
+def target_kind_index(t) -> int:
+    if isinstance(t, dict):
+        t = t.get("target_kind")
+    return _idx(TARGET_KINDS, t, _idx(TARGET_KINDS, "city_center"))
 
 
 # --------------------------------------------------------------- input builders
@@ -144,8 +159,10 @@ def encode_record(rec: dict) -> dict:
 
     feat = np.asarray(meta.get("features") or inp.get("features") or [],
                       dtype=np.float32)
-    if feat.shape[0] != N_FEAT:
-        feat = np.zeros(N_FEAT, dtype=np.float32)
+    if feat.shape[0] < N_FEAT:
+        feat = np.pad(feat, (0, N_FEAT - feat.shape[0])).astype(np.float32)
+    elif feat.shape[0] > N_FEAT:
+        feat = feat[:N_FEAT].astype(np.float32)
     static = np.concatenate([feat,
                              world_context_vec(inp.get("world_state")),
                              relationship_vec(inp.get("relationship_graph"))])
@@ -174,6 +191,7 @@ def encode_record(rec: dict) -> dict:
         "y_action": action_index(out.get("action")),
         "y_emotion": emotion_index(out.get("emotion")),
         "y_intent": intent_index(out.get("future_intent") or out.get("intent")),
+        "y_target": target_kind_index(out.get("target_kind") or out.get("action")),
         "memory_emb": np.asarray(emb, dtype=np.float32) if emb is not None
         else np.zeros(EMBED_DIM, dtype=np.float32),
         "dialogue_emb": np.asarray(demb, dtype=np.float32) if demb is not None
@@ -196,6 +214,8 @@ def encode_batch(records: list[dict], device: str = "cpu"):
         "y_emotion": torch.tensor([e["y_emotion"] for e in enc],
                                   dtype=torch.long, device=device),
         "y_intent": torch.tensor([e["y_intent"] for e in enc],
+                                 dtype=torch.long, device=device),
+        "y_target": torch.tensor([e["y_target"] for e in enc],
                                  dtype=torch.long, device=device),
         "memory_emb": t("memory_emb", torch.float32),
         "dialogue_emb": t("dialogue_emb", torch.float32),

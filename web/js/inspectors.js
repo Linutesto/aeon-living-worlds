@@ -536,6 +536,7 @@ async function renderPerson(body, openMode = null) {
       <div class="row"><span class="k">Work</span><span class="v">${esc(d.work_building || "work")}</span></div>
       <div class="row"><span class="k">Ambitions</span><span class="v" style="text-align:right">${(d.ambitions || []).map(esc).join("<br>") || "—"}</span></div>
     </div>
+    <div class="card"><h4>Spatial Brain</h4>${spatialRows(d)}</div>
     <div class="card"><h4>Drives</h4>
       <div class="row"><span class="k">Chief goal</span><span class="v">${esc(d.dominant_goal)}</span></div>
       <div class="row"><span class="k">Beliefs</span><span class="v" style="text-align:right">${d.beliefs.map(esc).join("<br>") || "—"}</span></div>
@@ -736,8 +737,28 @@ function mindRow(d) {
     <span class="v" style="color:${c}">${label}</span></div>`;
 }
 
+function spatialRows(d) {
+  const sp = d.spatial || {};
+  const act = d.current_action || {};
+  const feats = sp.features || {};
+  const target = act.target_position
+    ? `${Number(act.target_position[0]).toFixed(1)}, ${Number(act.target_position[1]).toFixed(1)}`
+    : "—";
+  const pos = (sp.position || []).slice(0, 2)
+    .map(n => Number(n).toFixed(1)).join(", ") || "—";
+  return `
+    <div class="row"><span class="k">Position</span><span class="v">${pos}</span></div>
+    <div class="row"><span class="k">Moving</span><span class="v">${d.moving ? "yes" : "no"} · path ${d.path_length || 0}</span></div>
+    <div class="row"><span class="k">Action target</span><span class="v">${esc(act.type || d.doing || "idle")} → ${esc(act.target_kind || "—")}</span></div>
+    <div class="row"><span class="k">Target position</span><span class="v">${target}</span></div>
+    <div class="row"><span class="k">Local risk</span><span class="v">${pct(feats.terrain_risk)} terrain · ${pct(feats.safety_score)} safety</span></div>
+    <div class="row"><span class="k">Nearby</span><span class="v">${sp.nearby_citizens ?? 0} citizens · terrain ${sp.terrain ?? "—"}</span></div>
+    <div class="reason">${esc(act.reason || "local perception")}</div>`;
+}
+
 function civHex(id) { return `hsl(${(id * 67) % 360} 60% 58%)`; }
 function compact(n) { return Intl.NumberFormat("en", { notation: "compact" }).format(n); }
+function pct(x) { return x == null ? "—" : `${Math.round(Number(x) * 100)}%`; }
 function esc(s) { return String(s).replace(/[&<>"']/g, (c) => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;",
 }[c])); }

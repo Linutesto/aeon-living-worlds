@@ -75,6 +75,7 @@ def test_encode_record_shapes():
     assert 0 <= e["y_action"] < enc.N_ACTION
     assert 0 <= e["y_emotion"] < enc.N_EMOTION
     assert 0 <= e["y_intent"] < enc.N_INTENT
+    assert 0 <= e["y_target"] < enc.N_TARGET
     assert e["memory_emb"].shape == (enc.EMBED_DIM,)
 
 
@@ -136,6 +137,7 @@ def test_liquid_forward_shape():
     heads, hs = net(x, dt)
     assert heads["action"].shape == (4, enc.N_ACTION)
     assert heads["emotion"].shape == (4, enc.N_EMOTION)
+    assert heads["target"].shape == (4, enc.N_TARGET)
     assert heads["memory"].shape == (4, enc.EMBED_DIM)
     assert len(hs) == 2 and hs[-1].shape == (4, 32)
 
@@ -272,6 +274,7 @@ def test_teacher_applies_and_logs(tmp_path, mind_engine):
     assert d.counts["behavior"] >= res["applied"]
     rec = d.sample_batch(1, channel="behavior")[0]
     assert rec["output"]["action"] == "work"
+    assert "target_kind" in rec["output"]
     assert len(rec["meta"]["features"]) == enc.N_FEAT
 
 
@@ -329,14 +332,23 @@ def test_runtime_decide_batch_and_status(tmp_path, mind_engine):
     persons = eng.population.residents(cid)
     # before warmup the student drives nobody
     assert mind.decide_batch(persons, eng.world) == {}
-    # force the student "ready" with high agreement → it should drive (most of) them
+    # force the student "ready" with high agreement → it should drive (most of) them.
+    # The teacher-priority curriculum gates on the full metric set, so a "confident"
+    # student is high-accuracy AND high-capability AND low-drift.
     mind.trainer.ready = True
     mind.trainer.steps = 100
     mind.trainer.agreement = 1.0
+    mind.trainer.action_acc = 1.0
+    mind.trainer.emotion_acc = 1.0
+    mind.trainer.intent_acc = 1.0
+    mind.trainer.target_acc = 1.0
+    mind.trainer.capability_score = 1.0
+    mind.trainer.drift_score = 0.0
     decisions = mind.decide_batch(persons, eng.world)
     assert decisions, "a confident student should drive citizens"
     any_dec = next(iter(decisions.values()))
     assert any_dec["action"] in enc.ACTIONS
+    assert any_dec["target_kind"] in enc.TARGET_KINDS
     st = mind.status()
     assert st["tier_counts"]["student"] >= 1
-    assert "student_share" in st and "dataset" in st
+    assert "student_share" in st and "dataset" in st and "curriculum_phase" in st

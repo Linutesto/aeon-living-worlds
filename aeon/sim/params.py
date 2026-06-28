@@ -43,6 +43,20 @@ BOUNDS: dict[str, Bound] = {
     "civ_expansion_drive":  Bound(0.0, 3.0, 1.0, "how aggressively civs settle new land"),
     "war_propensity":       Bound(0.0, 3.0, 1.0, "likelihood civs go to war"),
     "tech_progress":        Bound(0.0, 3.0, 1.0, "rate of civilization tech advance"),
+    "land_percent":         Bound(0.35, 0.78, 0.58, "target fraction of map above sea"),
+    "mountain_percent":     Bound(0.03, 0.24, 0.11, "target fraction of land as high mountains"),
+    "river_count":          Bound(2.0, 32.0, 12.0, "major rivers carved from highlands"),
+    "forest_density":       Bound(0.1, 2.5, 1.0, "relative forest coverage"),
+    "desert_frequency":     Bound(0.0, 2.5, 1.0, "relative desert coverage"),
+    "snow_line":            Bound(0.45, 0.95, 0.78, "elevation/temperature threshold for snow"),
+    "humidity_bias":        Bound(-0.35, 0.35, 0.0, "humidity offset used during genesis"),
+    "city_density":         Bound(0.35, 2.0, 1.0, "relative city founding capacity"),
+    "min_city_distance":    Bound(8.0, 40.0, 16.0, "minimum spacing between city centers"),
+    "road_importance":      Bound(0.0, 2.0, 1.0, "how strongly roads shape growth"),
+    "building_density":     Bound(0.35, 2.0, 1.0, "relative rendered building parcels per city"),
+    "district_size":        Bound(0.65, 1.6, 1.0, "city district footprint scale"),
+    "min_building_distance": Bound(0.8, 2.4, 1.18, "minimum visual spacing between buildings"),
+    "growth_speed":         Bound(0.35, 2.0, 1.0, "city population and influence growth speed"),
 }
 
 
@@ -63,6 +77,20 @@ class WorldParams:
     civ_expansion_drive: float = 1.0
     war_propensity: float = 1.0
     tech_progress: float = 1.0
+    land_percent: float = 0.58
+    mountain_percent: float = 0.11
+    river_count: float = 12.0
+    forest_density: float = 1.0
+    desert_frequency: float = 1.0
+    snow_line: float = 0.78
+    humidity_bias: float = 0.0
+    city_density: float = 1.0
+    min_city_distance: float = 16.0
+    road_importance: float = 1.0
+    building_density: float = 1.0
+    district_size: float = 1.0
+    min_building_distance: float = 1.18
+    growth_speed: float = 1.0
 
     @classmethod
     def from_defaults(cls) -> "WorldParams":

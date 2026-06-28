@@ -35,13 +35,25 @@ from pathlib import Path
 
 import numpy as np
 
+from ..agents.spatial import SPATIAL_FEATURES
 from ..agents.traits import ACTIONS
 
 log = logging.getLogger("aeon.ai")
-N_FEAT = 24
+LEGACY_N_FEAT = 24
+N_FEAT = LEGACY_N_FEAT + len(SPATIAL_FEATURES)
 N_ACT = len(ACTIONS)
 REPLAY_MAX = 20000          # bounded recency buffer (was 60k — stale samples drove drift)
 BATCH_SIZE = 512
+
+
+def _coerce_features(feats) -> list[float]:
+    vals = list(feats or [])
+    if len(vals) < N_FEAT:
+        vals = vals + [0.0] * (N_FEAT - len(vals))
+    elif len(vals) > N_FEAT:
+        vals = vals[:N_FEAT]
+    return [float(x) for x in vals]
+
 
 # --- AWR / stability hyperparameters (shared by both backends) -----------------
 AWR_TEMP = 1.0              # advantage temperature; higher = softer weighting
@@ -84,7 +96,7 @@ class _TorchPolicy:
 
     def bias(self, feats: list[float]) -> list[float]:
         with torch.no_grad():
-            x = torch.tensor(feats, dtype=torch.float32, device=_DEVICE)
+            x = torch.tensor(_coerce_features(feats), dtype=torch.float32, device=_DEVICE)
             logits = self.net(x)
             return torch.softmax(logits, -1).mul(N_ACT).cpu().tolist()
 
@@ -92,7 +104,7 @@ class _TorchPolicy:
         """One AWR update with an entropy bonus and a KL trust region."""
         if len(batch) < 16:
             return 0.0
-        feats = torch.tensor([b["features"] for b in batch],
+        feats = torch.tensor([_coerce_features(b["features"]) for b in batch],
                              dtype=torch.float32, device=_DEVICE)
         acts = torch.tensor([ACTIONS.index(b["action"]) for b in batch],
                             dtype=torch.long, device=_DEVICE)
@@ -130,7 +142,7 @@ class _TorchPolicy:
                     p.copy_(p0 + scale * (p - p0))
                 kl = KL_CAP
         self.last_kl = kl
-        self.last_entropy = float(entropy)
+        self.last_entropy = float(entropy.detach())
         return float(loss.item())
 
     def state(self) -> dict:
@@ -160,7 +172,7 @@ class _NumpyPolicy:
         return P / P.sum(1, keepdims=True)
 
     def bias(self, feats):
-        z = np.asarray(feats, dtype=np.float32) @ self.W + self.b
+        z = np.asarray(_coerce_features(feats), dtype=np.float32) @ self.W + self.b
         e = np.exp(z - z.max())
         return (e / e.sum() * N_ACT).tolist()
 
@@ -168,7 +180,7 @@ class _NumpyPolicy:
         """AWR update — the numpy mirror of `_TorchPolicy.learn` (same math)."""
         if len(batch) < 16:
             return 0.0
-        X = np.array([b["features"] for b in batch], dtype=np.float32)
+        X = np.array([_coerce_features(b["features"]) for b in batch], dtype=np.float32)
         a = np.array([ACTIONS.index(b["action"]) for b in batch])
         r = np.array([b["reward"] for b in batch], dtype=np.float32)
         n = len(batch)
@@ -272,7 +284,7 @@ class SpeciesBrain:
     def add_samples(self, samples: list[dict]) -> None:
         valid = [s for s in samples
                  if s.get("action") in ACTIONS
-                 and len(s.get("features", [])) == N_FEAT]
+                 and len(s.get("features", [])) in (LEGACY_N_FEAT, N_FEAT)]
         if not valid:
             return
         self.replay.extend(valid)

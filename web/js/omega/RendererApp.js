@@ -1852,7 +1852,7 @@ function buildBuildings(buildings) {
     const up = new THREE.Vector3(0, 1, 0);
     const color = new THREE.Color();
     items.forEach((b, i) => {
-      const s = buildingScale(b);
+      const s = buildingScale(b, archetype);
       // geometry base sits at y=0, so place it ON the terrain (slight sink to avoid z-fight)
       const pos = new THREE.Vector3(worldX(b.x), sampleHeight(b.x, b.y) - 0.03, worldZ(b.y));
       q.setFromAxisAngle(up, stableAngle(b.id));
@@ -2084,6 +2084,37 @@ function buildCityLights(skylines) {
   cityLightGroup.add(pts);
 }
 
+// Small character-like avatars for the moving population. Agents used to be a bare
+// capsule (citizens) or cone (units) — readable as "a dot", not as a person. These are
+// low-poly humanoids (legs + torso + shoulders + head) merged into ONE geometry so the
+// whole crowd still draws as a single instanced mesh (per-instance colour = role, scale =
+// cohort). Built feet-at-origin so they stand ON the terrain; cached per variant. Units
+// also carry a small standard so a marching party reads differently from a lone citizen.
+// Fallback: if BufferGeometryUtils is unavailable the caller's try/catch keeps the old
+// primitive, so a CDN hiccup never blanks the population.
+const AGENT_LIFT = 0.02;             // feet just above terrain (avoid z-fight)
+const _humanoidCache = new Map();
+function humanoidGeometry(variant = "citizen") {
+  if (_humanoidCache.has(variant)) return _humanoidCache.get(variant);
+  const parts = [];
+  const push = (g, x, y, z) => { g.translate(x, y, z); parts.push(g); };
+  push(new THREE.CylinderGeometry(0.055, 0.085, 0.20, 6), 0, 0.10, 0);   // legs / base
+  push(new THREE.CylinderGeometry(0.078, 0.062, 0.22, 7), 0, 0.31, 0);   // torso
+  push(new THREE.BoxGeometry(0.19, 0.06, 0.085), 0, 0.37, 0);            // shoulders/arms
+  push(new THREE.SphereGeometry(0.07, 8, 6), 0, 0.48, 0);                // head
+  if (variant === "unit") {                                              // carried standard
+    push(new THREE.CylinderGeometry(0.016, 0.016, 0.62, 4), 0.17, 0.31, 0);
+    const banner = new THREE.BoxGeometry(0.012, 0.16, 0.20);
+    banner.translate(0.17, 0.52, 0.10);
+    parts.push(banner);
+  }
+  const flat = parts.map((p) => (p.index ? p.toNonIndexed() : p));
+  const geo = BufferGeometryUtils.mergeGeometries(flat, false);
+  geo.computeVertexNormals();
+  _humanoidCache.set(variant, geo);
+  return geo;
+}
+
 function buildCitizens(citizens) {
   const crowds = citizens?.crowds || [];
   const crowdDensity = THREE.MathUtils.clamp(renderOptions.agentCrowdDensity || 1, 0, 1.5);
@@ -2103,17 +2134,21 @@ function buildCitizens(citizens) {
   const agentLimit = Math.max(0, Math.floor(quality.agentLimit * crowdDensity));
   const agents = (citizens?.agents || []).slice(0, agentLimit);
   if (!agents.length) return;
-  const geo = new THREE.CapsuleGeometry(0.11, 0.34, 3, 6);
+  const geo = humanoidGeometry("citizen");
   const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.7 });
   const mesh = new THREE.InstancedMesh(geo, mat, agents.length);
   mesh.userData.kind = "person";
   mesh.userData.instances = agents;
   mesh.userData.animated = agents.map((p, i) => ({ data: p, i, kind: "person" }));
   const m = new THREE.Matrix4();
+  const q = new THREE.Quaternion();
+  const up = new THREE.Vector3(0, 1, 0);
   const color = new THREE.Color();
   agents.forEach((p, i) => {
-    const pos = agentPosition(p, performance.now(), 0.48);
-    m.compose(pos, new THREE.Quaternion(), new THREE.Vector3(agentScale(p), agentScale(p), agentScale(p)));
+    const pos = agentPosition(p, performance.now(), AGENT_LIFT);
+    q.setFromAxisAngle(up, agentAngle(p, performance.now()));
+    const sc = agentScale(p);
+    m.compose(pos, q, new THREE.Vector3(sc, sc, sc));
     mesh.setMatrixAt(i, m);
     color.setHex(citizenColor(p));
     mesh.setColorAt(i, color);
@@ -2129,7 +2164,7 @@ function buildCitizens(citizens) {
 
 function buildUnits(units) {
   if (!units?.length) return;
-  const geo = new THREE.ConeGeometry(0.22, 0.65, 5);
+  const geo = humanoidGeometry("unit");
   const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.72 });
   const mesh = new THREE.InstancedMesh(geo, mat, units.length);
   mesh.userData.kind = "unit";
@@ -2138,7 +2173,7 @@ function buildUnits(units) {
   const m = new THREE.Matrix4();
   const color = new THREE.Color();
   units.forEach((u, i) => {
-    const pos = new THREE.Vector3(worldX(u.x), sampleHeight(u.x, u.y) + 0.62, worldZ(u.y));
+    const pos = new THREE.Vector3(worldX(u.x), sampleHeight(u.x, u.y) + AGENT_LIFT, worldZ(u.y));
     const target = u.target || [u.x, u.y];
     const angle = Math.atan2(target[0] - u.x, target[1] - u.y);
     m.compose(pos, new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), angle),
@@ -2579,6 +2614,18 @@ function overlayDescription(name) {
     resources: "Food and metal availability around each city.",
     climate: "Temperature and rainfall pressure.",
     policy_confidence: "Species policy confidence from replay-buffer learning.",
+    land_mask: "Settlement probes on accepted land.",
+    water_mask: "Water pressure around settlement probes.",
+    height: "Normalized terrain height at settlement probes.",
+    temperature: "Normalized local temperature at settlement probes.",
+    humidity: "Local humidity at settlement probes.",
+    fertility: "Food fertility at settlement probes.",
+    buildable_score: "Terrain, slope, water, resources, and expansion suitability.",
+    city_influence: "City influence radius compared with maximum urban reach.",
+    road_graph: "Road access from the simulation road network.",
+    district_map: "Urban district/building parcel intensity.",
+    building_collisions: "Placement stress from unplaceable or abandoned building parcels.",
+    spawn_rejections: "How many candidate genesis seeds were rejected before acceptance.",
   }[name] || "Simulation-derived pressure overlay.";
 }
 
@@ -2589,6 +2636,9 @@ function overlayWhy(name, o) {
   if (name === "rebellion_probability") return `Rebellion combines unrest, scarcity, and learned feud/radical pressure.`;
   if (name === "religion") return `Religion influence is the dominant faith share in this city.`;
   if (name === "faction") return `Faction pressure comes from active faction influence in this city.`;
+  if (name === "buildable_score") return `Buildability combines slope, water access, resources, climate, roads, and expansion room.`;
+  if (name === "road_graph") return `Road access comes from terrain-aware simulation roads, not renderer-only links.`;
+  if (name === "spawn_rejections") return `Seed validation rejected broken topologies before this world was accepted.`;
   return overlayDescription(name);
 }
 
@@ -2632,7 +2682,7 @@ function updateAnimatedMeshes(now) {
         scale = unitScale(d.kind);
         entityIndex.set(`unit:${d.id}`, { position: pos.clone(), data: d });
       } else {
-        pos = agentPosition(d, now, 0.48);
+        pos = agentPosition(d, now, AGENT_LIFT);
         angle = agentAngle(d, now);
         scale = agentScale(d);
         entityIndex.set(`person:${d.id}`, { position: pos.clone(), data: d });
@@ -2679,7 +2729,7 @@ function unitPosition(u, now) {
   const t = ((now * 0.00008 * unitScale(u.kind)) + stable01(`unit:${u.id}`)) % 1;
   const nx = u.x + (target[0] - u.x) * t;
   const ny = u.y + (target[1] - u.y) * t;
-  return new THREE.Vector3(worldX(nx), sampleHeight(nx, ny) + 0.62, worldZ(ny));
+  return new THREE.Vector3(worldX(nx), sampleHeight(nx, ny) + AGENT_LIFT, worldZ(ny));
 }
 
 // A single large opaque plane well below the terrain. It is always present, so a
@@ -2818,6 +2868,12 @@ function overlayColor(o) {
   if (overlay === "resources") return new THREE.Color().setHSL(0.29, 0.75, 0.24 + value * 0.42).getHex();
   if (overlay === "policy_confidence") return new THREE.Color().setHSL(0.16, 0.85, 0.24 + value * 0.44).getHex();
   if (overlay === "climate") return new THREE.Color().setHSL(0.58 - value * 0.5, 0.72, 0.35).getHex();
+  if (overlay === "buildable_score" || overlay === "fertility") return new THREE.Color().setHSL(0.31, 0.78, 0.22 + value * 0.46).getHex();
+  if (overlay === "road_graph") return new THREE.Color().setHSL(0.10, 0.7, 0.25 + value * 0.45).getHex();
+  if (overlay === "building_collisions" || overlay === "spawn_rejections") return new THREE.Color().setHSL(0.02, 0.85, 0.25 + value * 0.44).getHex();
+  if (overlay === "height") return new THREE.Color().setHSL(0.22 - value * 0.1, 0.42, 0.18 + value * 0.58).getHex();
+  if (overlay === "humidity" || overlay === "water_mask") return new THREE.Color().setHSL(0.56, 0.74, 0.22 + value * 0.48).getHex();
+  if (overlay === "temperature") return new THREE.Color().setHSL(0.62 - value * 0.62, 0.78, 0.26 + value * 0.34).getHex();
   return new THREE.Color().setHSL(0.11, 0.82, 0.25 + value * 0.42).getHex();
 }
 
@@ -2850,6 +2906,7 @@ function unitScale(kind) {
 // ~1 tall) and scaled per building by buildingScale().
 const _geoCache = new Map();
 const _geoGroups = new Map();    // archetype -> 1 (walls only) or 2 (walls + roof)
+const _geoHalfWidth = new Map(); // archetype -> base geometry horizontal half-extent
 const WALL = new THREE.Color(1, 1, 1);                 // tinted per-instance
 const ROOF = new THREE.Color(0.62, 0.34, 0.28);        // warm tile, relative tint
 const ROOF_DARK = new THREE.Color(0.34, 0.30, 0.28);   // slate / thatch
@@ -3126,15 +3183,45 @@ function buildingGeometry(archetype) {
   }
   if (!geo) throw new Error("building geometry assembly failed: " + archetype);
   geo.computeVertexNormals();
+  // remember the geometry's horizontal half-extent (incl. roof overhang) so buildingScale
+  // can size the drawn volume to exactly the footprint radius the layout reserved.
+  geo.computeBoundingBox();
+  const bb = geo.boundingBox;
+  _geoHalfWidth.set(archetype,
+    Math.max(1e-3, Math.abs(bb.max.x), Math.abs(bb.min.x), Math.abs(bb.max.z), Math.abs(bb.min.z)));
   _geoCache.set(archetype, geo);
   return geo;
 }
 
-// The composite geometries already encode each archetype's proportions, so scale is
-// a single size factor: bigger civic/noble structures, growing modestly with wealth,
-// and a touch shorter when run-down. Footprint and height stay coupled so buildings
-// never look stretched.
-function buildingScale(b) {
+// Buildings used to be sized by an ad-hoc factor unrelated to the collision-free layout
+// (render/placement.py), so the drawn volumes were ~2× the footprint the layout reserved
+// and visibly overlapped even though their CENTRES were correctly spaced. Now the
+// horizontal scale is locked to the simulation FOOTPRINT (a radius in tiles) converted to
+// world units: rendered half-width = footprint · tileScale · PACK, where PACK ≤ the city's
+// min-spacing factor. Since the layout guarantees centre gaps ≥ (rA+rB)·spacing, two slots
+// can never render as overlapping volumes. Height is unconstrained by packing, so civic /
+// landmark structures still rise. Falls back to the legacy factor when footprint / layout
+// data is missing, so nothing breaks if a chunk predates this field.
+function buildingScale(b, archetype = b.archetype) {
+  const footprint = b.visual?.footprint;
+  const baseHalf = _geoHalfWidth.get(archetype);
+  const worldW = manifest?.world?.width;
+  if (!footprint || !baseHalf || !worldW) return legacyBuildingScale(b);
+  const cond = Math.max(0.3, b.condition ?? 1);
+  const visualHeight = THREE.MathUtils.clamp(b.visual?.height || 1, 0.3, 4.0);
+  const tileScale = SCALE / worldW;                 // tiles -> three-units
+  // PACK ≤ spacing ⇒ no overlap; ·0.85 leaves a readable street between footprints.
+  const pack = Math.min(1.1, (b.visual?.spacing || 1.18) * 0.85);
+  const s = (footprint * tileScale * pack) / baseHalf;
+  const grand = archetype === "palace" ? 1.4 : archetype === "temple" || archetype === "academy" ? 1.25
+    : archetype === "manor" || archetype === "warehouse" || archetype === "barracks" ? 1.12
+    : archetype === "tower" || archetype === "watchtower" ? 1.1 : 1.0;
+  const landmark = b.visual?.landmark ? 1.18 + (b.visual?.skyline_score || 0) * 0.28 : 1.0;
+  // height is free of the packing constraint, so importance reads vertically
+  return { s, y: s * (0.85 + visualHeight * 0.55) * grand * landmark * (0.92 + cond * 0.1) };
+}
+
+function legacyBuildingScale(b) {
   const wealth = b.wealth || 0;
   const cond = Math.max(0.3, b.condition ?? 1);
   const a = b.archetype;

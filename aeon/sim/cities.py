@@ -109,6 +109,9 @@ class City:
     unrest: float = 0.0
     history: list[str] = field(default_factory=list)
     abandoned_tick: int | None = None
+    building_spacing: float = 1.18
+    district_size: float = 1.0
+    road_access: float = 0.0
 
     @property
     def alive(self) -> bool:
@@ -135,6 +138,9 @@ def found_city(world, civ, y: int, x: int, population: float,
         population=float(population),
         founded_tick=world.tick,
     )
+    city.building_spacing = float(getattr(world.params, "min_building_distance", 1.18))
+    city.district_size = float(getattr(world.params, "district_size", 1.0))
+    city.road_access = _road_access_at(world, int(y), int(x))
     _init_economy(world, city)
     _update_specialty(world, city)
     world.cities[cid] = city
@@ -192,17 +198,26 @@ def _region(world, cy: int, cx: int, r: int):
 
 
 def site_suitability(world, y: int, x: int) -> float:
-    """How good a place this is to live: food + fresh water + temperate + low."""
+    """How good a place this is to live: buildable land + water + fertility + roads."""
     if not world.land_mask[y, x]:
+        return 0.0
+    buildable = float(getattr(world, "buildable_score", np.zeros_like(world.elevation))[y, x])
+    if buildable <= 0.05:
         return 0.0
     reg = _region(world, y, x, 3)
     food = float(world.food[reg].mean())
-    fresh = 0.3 if float(world.water[reg].max()) > 0.2 else 0.0   # river/lake bonus
+    fresh = 0.3 if float(world.water[reg].max()) > 0.2 else 0.0
     coast = 0.2 if _is_coastal(world, y, x) else 0.0
     temp = float(world.temperature[y, x])
     temp_fit = np.exp(-((temp - 18) ** 2) / 400)                  # ~18C ideal
     elev_pen = max(0.0, world.elevation[y, x] - 0.5)              # mountains hurt
-    return max(0.0, food + fresh + coast + 0.4 * temp_fit - elev_pen)
+    slope = float(getattr(world, "terrain_slope", np.zeros_like(world.elevation))[y, x])
+    expansion = float(_expansion_space(world, y, x, 5))
+    road = _road_access_at(world, y, x)
+    return max(0.0, buildable * 1.15 + food * 0.5 + fresh + coast
+               + 0.35 * temp_fit + 0.22 * expansion
+               + 0.18 * road * world.params.road_importance
+               - elev_pen - slope * 2.2)
 
 
 def _is_coastal(world, y: int, x: int) -> bool:
@@ -231,13 +246,29 @@ def _update_specialty(world, city: City) -> None:
 
 
 def _too_close(world, y: int, x: int) -> bool:
+    min_spacing = int(max(4, getattr(world.params, "min_city_distance", MIN_CITY_SPACING)))
     for c in world.cities.values():
         if not c.alive:
             continue
         cy, cx = c.pos
-        if abs(cy - y) + abs(cx - x) < MIN_CITY_SPACING:
+        if abs(cy - y) + abs(cx - x) < min_spacing:
             return True
     return False
+
+
+def _road_access_at(world, y: int, x: int) -> float:
+    road = getattr(world, "road_access", None)
+    if road is None:
+        return 0.0
+    return float(road[int(y), int(x)])
+
+
+def _expansion_space(world, y: int, x: int, r: int) -> float:
+    buildable = getattr(world, "buildable_score", None)
+    if buildable is None:
+        return 0.5
+    reg = _region(world, y, x, r)
+    return float((buildable[reg] > 0.38).mean())
 
 
 def step(world: "_w.WorldState") -> list[dict]:
@@ -272,8 +303,10 @@ def step(world: "_w.WorldState") -> list[dict]:
             world.food[reg] *= (1.0 - take)
 
         # --- growth / starvation ---
+        city.road_access = _road_access_at(world, cy, cx)
         base = 0.035 * (ratio - 1.0)
         base += 0.003 * p.tech_progress                    # slow baseline progress
+        base += 0.004 * city.road_access * p.road_importance
         base += 0.006 * max(0.0, city.economic_health - 0.65)
         base -= 0.02 * city.unrest
         base -= 0.015 * city.damage
@@ -282,7 +315,7 @@ def step(world: "_w.WorldState") -> list[dict]:
         base -= 0.01 * city.migration_pressure
         base -= 0.006 * memory["trauma"]
         base += 0.003 * memory["heritage"]
-        city.growth_rate = float(np.clip(base, -0.08, 0.035))
+        city.growth_rate = float(np.clip(base * p.growth_speed, -0.08, 0.04))
         city.population = max(0.0, city.population * (1 + city.growth_rate))
 
         # --- famine state (visible) ---
@@ -331,8 +364,9 @@ def step(world: "_w.WorldState") -> list[dict]:
 
         # --- expansion: found a daughter city (respecting the global cap) ---
         n_live = sum(1 for c in world.cities.values() if c.alive)
+        cap = int(CITY_CAP * max(0.5, min(2.0, p.city_density)))
         if (city.population > DAUGHTER_POP and city.wealth > 20
-                and n_live < CITY_CAP
+                and n_live < cap
                 and world.rng.chance("daughter", 0.02 * p.civ_expansion_drive)):
             ev = _try_daughter(world, city)
             if ev:
@@ -628,7 +662,10 @@ def _resource_targets(city: City, demand: float) -> dict[str, float]:
 def _update_buildings(world, city: City, reg) -> None:
     if not city.buildings:
         _init_economy(world, city)
-    city.buildings["homes"] = max(1, int(city.population / 6))
+    density = max(0.35, min(2.0, world.params.building_density))
+    city.building_spacing = float(world.params.min_building_distance)
+    city.district_size = float(world.params.district_size)
+    city.buildings["homes"] = max(1, int(city.population / 6 * density))
     city.buildings["slums"] = max(0, int(city.population * city.unrest / 700))
     city.buildings["farms"] = max(1, int(city.food_production / 18))
     city.buildings["market"] = max(1, int(city.wealth / 25) + 1)
@@ -653,7 +690,8 @@ def _sync_building_entities(world, city: City) -> None:
         city.building_entities = {}
     desired: dict[str, int] = {}
     for kind, count in city.buildings.items():
-        cap = 220 if kind in ("homes", "farms") else 70 if kind == "slums" else 45
+        density = max(0.35, min(2.0, getattr(world.params, "building_density", 1.0)))
+        cap = int((220 if kind in ("homes", "farms") else 70 if kind == "slums" else 45) * density)
         desired[kind] = max(0, min(int(count), cap))
 
     keep: set[str] = set()
@@ -754,8 +792,9 @@ def _try_daughter(world, parent: City):
     cy, cx = parent.pos
     rng = world.rng.stream("daughter")
     best, by, bx = 0.0, None, None
-    for _ in range(14):
-        dist = int(rng.integers(MIN_CITY_SPACING, MIN_CITY_SPACING + 14))
+    min_spacing = int(max(4, getattr(world.params, "min_city_distance", MIN_CITY_SPACING)))
+    for _ in range(28):
+        dist = int(rng.integers(min_spacing, min_spacing + 18))
         ang = rng.random() * 2 * np.pi
         y = int(np.clip(cy + dist * np.sin(ang), 1, world.height - 2))
         x = int(np.clip(cx + dist * np.cos(ang), 1, world.width - 2))
