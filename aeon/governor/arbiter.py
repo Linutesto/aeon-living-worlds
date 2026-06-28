@@ -3,13 +3,15 @@
 AEON has many model consumers (the world-spirit governor, the Chronicle, world-flavor,
 two background-narration workers, on-demand interviews, and the 27B cohort teacher) all
 hitting one Ollama on one GPU. Fired freely they thrash VRAM and the slow, valuable jobs
-(teacher, governor, interviews) starve behind a flood of ambient reports/flavor.
+(player interviews, governor, teacher) starve behind a flood of ambient reports/flavor.
 
 This scheduler makes the scarce resource behave:
 
   * one gate, `max_concurrent` (default 1 — a single GPU can't parallelize generation);
-  * **priority** classes, with a **protected band** (governor/teacher/interview) that is
-    never throttled and that low-priority work can never preempt;
+  * **priority** classes, with player interviews at the top and a **protected band**
+    (interview/governor/teacher) that is never throttled;
+  * **player preemption**: a waiting interview can cancel a non-interview in-flight call
+    so the person at the keyboard is not stuck behind simulation prose;
   * **starvation aging** so two low-priority classes don't deadlock each other;
   * per-consumer **cooldowns** and **quotas**, and a rolling **token budget** — when a
     low-priority consumer exceeds them it gets a cheap deterministic **fallback** instead
@@ -31,8 +33,8 @@ import time
 from collections import deque
 
 # priority bands (lower wins) — kept as module constants for back-compat
-TEACHER = 0
-INTERVIEW = 1
+INTERVIEW = 0
+TEACHER = 1
 GOVERNOR = 2
 CHRONICLE = 6
 FLAVOR = 8
@@ -40,8 +42,8 @@ NARRATION = 8
 
 # consumer registry: name -> (priority, cooldown_s, quota_share of recent window)
 CONSUMERS: dict[str, tuple[int, float, float]] = {
-    "cohort_teacher":    (0, 0.0, 1.0),
-    "citizen_interview": (1, 0.0, 1.0),
+    "citizen_interview": (0, 0.0, 1.0),
+    "cohort_teacher":    (1, 0.0, 1.0),
     "spirit_governor":   (2, 0.0, 1.0),
     "rare_citizen":      (3, 4.0, 0.30),
     "major_event":       (4, 4.0, 0.40),
@@ -53,6 +55,7 @@ CONSUMERS: dict[str, tuple[int, float, float]] = {
     "diagnostics":       (9, 30.0, 0.10),
 }
 PROTECTED = {"spirit_governor", "cohort_teacher", "citizen_interview"}
+PREEMPTORS = {"citizen_interview"}
 PROTECTED_CEILING = 3        # aging can lift a non-protected job no higher than this
 AGE_STEP = 5.0               # seconds of waiting per +1 effective-priority step
 DEFAULT_BUDGET = 60_000      # token budget per rolling 60s window
@@ -76,6 +79,18 @@ class _Waiter:
         return max(self.priority - bonus, PROTECTED_CEILING)
 
 
+class _ActiveCall:
+    __slots__ = ("consumer", "label", "priority", "task", "fallback", "preempted")
+
+    def __init__(self, consumer, label, priority, task, fallback):
+        self.consumer = consumer
+        self.label = label
+        self.priority = priority
+        self.task = task
+        self.fallback = fallback
+        self.preempted = False
+
+
 class LLMScheduler:
     def __init__(self, *, max_concurrent: int = 1, budget_per_min: int = DEFAULT_BUDGET):
         self.max_concurrent = max_concurrent
@@ -84,6 +99,7 @@ class LLMScheduler:
         self._active = 0
         self._seq = 0
         self._pending: dict[str, asyncio.Future] = {}     # cache_key -> shared result
+        self._active_calls: dict[asyncio.Task, _ActiveCall] = {}
         self._last_call: dict[str, float] = {}            # consumer -> monotonic
         self._recent: deque[tuple[float, str, int]] = deque()  # (ts, consumer, tokens)
         self.inflight: list[str] = []
@@ -100,6 +116,9 @@ class LLMScheduler:
         name = consumer or label or "llm"
         lbl = label or name
         protected = name in PROTECTED
+
+        if name in PREEMPTORS:
+            self._preempt_for(name, prio)
 
         # dedup: attach to an in-flight identical job rather than issuing a second call
         if cache_key and cache_key in self._pending:
@@ -143,16 +162,32 @@ class LLMScheduler:
         self._last_call[name] = time.monotonic()
         self._recent.append((time.monotonic(), name, tokens))
         t0 = time.monotonic()
-        ok, result = True, None
+        ok, result, skipped = True, None, None
+        task: asyncio.Task | None = None
+        active: _ActiveCall | None = None
         try:
-            result = await fn()
+            task = asyncio.create_task(fn())
+            active = _ActiveCall(name, lbl, prio, task, fallback)
+            self._active_calls[task] = active
+            result = await task
             return result
+        except asyncio.CancelledError:
+            if active is not None and active.preempted:
+                skipped = "preempted"
+                result = self._fallback_value(fallback)
+                return result
+            if task is not None:
+                task.cancel()
+            ok = False
+            raise
         except Exception:
             ok = False
             raise
         finally:
             ms = int((time.monotonic() - t0) * 1000)
-            self._record(lbl, name, prio, tick, meta, ms, ok=ok,
+            if task is not None:
+                self._active_calls.pop(task, None)
+            self._record(lbl, name, prio, tick, meta, ms, ok=ok, skipped=skipped,
                          out_tokens=_estimate(result))
             if lbl in self.inflight:
                 self.inflight.remove(lbl)
@@ -174,6 +209,22 @@ class LLMScheduler:
             self._waiters.remove(w)
             self._active += 1
             w.event.set()
+
+    def _preempt_for(self, consumer: str, priority: int) -> None:
+        if self._active < self.max_concurrent:
+            return
+        candidates = sorted(
+            self._active_calls.items(),
+            key=lambda item: item[1].priority,
+            reverse=True)
+        for task, active in candidates:
+            if task.done() or active.preempted or active.consumer == consumer:
+                continue
+            if active.priority > priority:
+                active.preempted = True
+                self.throttle_reason[active.consumer] = f"preempted_by_{consumer}"
+                task.cancel()
+                return
 
     def _throttle_reason(self, name, cooldown, quota, tokens) -> str | None:
         now = time.monotonic()

@@ -1,8 +1,9 @@
 """The LLM scheduler: priority economy, budget, quotas, dedup, stale, fallbacks.
 
-Verifies the call-economy guarantees: governor/teacher/interview (protected band) are
-never starved, abundant low-priority reports/flavor are delayed/throttled, duplicate jobs
-collapse, stale jobs cancel, and throttled low-priority work gets a cheap fallback.
+Verifies the call-economy guarantees: player interviews can preempt non-player calls,
+the protected band is never starved, abundant low-priority reports/flavor are
+delayed/throttled, duplicate jobs collapse, stale jobs cancel, and throttled
+low-priority work gets a cheap fallback.
 """
 
 from __future__ import annotations
@@ -87,7 +88,69 @@ def test_protected_priority_order_teacher_interview_governor():
         await asyncio.gather(b, gov, interview, teacher)
 
     _run(main())
-    assert order[:4] == ["blocker", "teacher", "interview", "governor"]
+    assert order[:4] == ["blocker", "interview", "teacher", "governor"]
+
+
+def test_interview_preempts_inflight_non_player_call():
+    s = LLMScheduler()
+    events: list[str] = []
+
+    async def slow_teacher():
+        events.append("teacher-start")
+        try:
+            await asyncio.sleep(1)
+            events.append("teacher-finished")
+            return "teacher-result"
+        except asyncio.CancelledError:
+            events.append("teacher-cancelled")
+            raise
+
+    async def interview():
+        events.append("interview-start")
+        return "answer"
+
+    async def main():
+        teacher = asyncio.create_task(
+            s.run(slow_teacher, consumer="cohort_teacher", fallback="teacher-deferred"))
+        await asyncio.sleep(0.02)
+        answer = await s.run(interview, consumer="citizen_interview")
+        deferred = await teacher
+        return answer, deferred
+
+    answer, deferred = _run(main())
+    assert answer == "answer"
+    assert deferred == "teacher-deferred"
+    assert events == ["teacher-start", "teacher-cancelled", "interview-start"]
+    assert s.stats["cohort_teacher"]["skipped"] == 1
+
+
+def test_interview_does_not_preempt_when_slot_is_available():
+    s = LLMScheduler(max_concurrent=2)
+    events: list[str] = []
+
+    async def slow_teacher():
+        events.append("teacher-start")
+        await asyncio.sleep(0.04)
+        events.append("teacher-finished")
+        return "teacher-result"
+
+    async def interview():
+        events.append("interview-start")
+        return "answer"
+
+    async def main():
+        teacher = asyncio.create_task(
+            s.run(slow_teacher, consumer="cohort_teacher", fallback="teacher-deferred"))
+        await asyncio.sleep(0.01)
+        answer = await s.run(interview, consumer="citizen_interview")
+        teacher_result = await teacher
+        return answer, teacher_result
+
+    answer, teacher_result = _run(main())
+    assert answer == "answer"
+    assert teacher_result == "teacher-result"
+    assert events == ["teacher-start", "interview-start", "teacher-finished"]
+    assert s.stats["cohort_teacher"]["skipped"] == 0
 
 
 def test_dedup_collapses_identical_jobs():

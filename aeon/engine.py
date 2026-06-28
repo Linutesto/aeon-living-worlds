@@ -70,8 +70,8 @@ class Engine:
         self.governor = Governor(cfg.governor, self.world, self.memory,
                                  self.history, self.metrics)
         # one scheduler (priority + budget + quotas + dedup) in front of the single
-        # local model server, so cheap abundant journaling can't starve the governor,
-        # 27B teacher, or interviews. The governor rides the protected band.
+        # local model server. Player interviews sit at the top and can preempt
+        # simulation calls; governor and teacher stay protected from ambient prose.
         self.llm_arbiter = LLMArbiter(
             max_concurrent=getattr(cfg.governor, "llm_max_concurrent", 1),
             budget_per_min=getattr(cfg.governor, "llm_budget_per_min", 60_000))

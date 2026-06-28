@@ -111,9 +111,10 @@ implied by the dossier. Keep it to 1–4 sentences, plain and human."""
 async def interview(llm, person, world, pop, question: str) -> str:
     dossier = build_dossier(person, world, pop)
     user = f"{dossier}\n\nThe traveller asks you: \"{question}\"\n\nYour answer:"
-    # a human is waiting on an interview — ride the protected band, never throttled
+    # A human is waiting on an interview: the scheduler gives this consumer top priority
+    # and may preempt background LLM work to get an answer started quickly.
     text = await llm.complete(SYSTEM, user, format_json=False,
-                              consumer="citizen_interview", priority=2,
+                              consumer="citizen_interview",
                               tick=getattr(world, "tick", 0),
                               meta={"person": getattr(person, "name", "")})
     return text.strip().strip('"')
