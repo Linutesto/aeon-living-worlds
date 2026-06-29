@@ -11,6 +11,11 @@ overthrow states; and an optional local LLM acts as a **world-spirit** that bend
 rules (never the outcomes) and narrates the unfolding history into a **Chronicle**. You
 watch and steer it all from a real-time 3D dashboard built mobile-first.
 
+**▶ [Watch a real AEON world run in your browser](https://yandesbiens.com/projects/aeon)** — a
+recorded world replaying live in the actual renderer, no install. If it's your kind of thing:
+⭐ star the repo, and [follow the lab](https://yandesbiens.com/newsletter/) for one short email
+per proof drop (no spam).
+
 > ⚠️ **This is an experimental prototype, not a finished game.** Sim balance, AI systems,
 > and save formats are all evolving. The goal is a world that becomes stranger, richer,
 > and more storied over time — one you open "for five minutes" and look up three hours
